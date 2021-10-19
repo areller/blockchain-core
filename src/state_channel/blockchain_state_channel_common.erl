@@ -16,7 +16,7 @@
 
 %% API
 -export([
-    send_purchase/5,
+    send_purchase/5, send_purchase_diff/6,
     send_response/2,
     send_banner/2,
     send_rejection/2,
@@ -157,6 +157,19 @@ send_offer(Pid, Offer) ->
 send_purchase(Pid, NewPurchaseSC, Hotspot, PacketHash, Region) ->
     lager:debug("sending purchase: ~p, pid: ~p", [NewPurchaseSC, Pid]),
     Pid ! {send_purchase, NewPurchaseSC, Hotspot, PacketHash, Region},
+    ok.
+
+-spec send_purchase_diff(
+    Pid :: pid(),
+    Summary :: blockchain_state_channel_summary_v1:summary(),
+    PacketHash :: binary(),
+    Region :: atom(),
+    Owner :: libp2p_crypto:pubkey_bin(),
+    OwnerSigFun :: function()
+) -> ok.
+send_purchase_diff(Pid, Summary, PacketHash, Region, Owner, OwnerSigFun) ->
+    lager:debug("sending purchase: ~p, pid: ~p", [Summary, Pid]),
+    Pid ! {send_purchase_diff, Summary, PacketHash, Region, Owner, OwnerSigFun},
     ok.
 
 -spec send_banner(pid(), blockchain_state_channel_banner_v1:banner()) -> ok.
