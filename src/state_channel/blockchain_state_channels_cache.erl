@@ -21,7 +21,10 @@
     lookup_actives/0,
     insert_actives/1,
     delete_actives/1,
-    overwrite_actives/1
+    overwrite_actives/1,
+    insert_diff/2,
+    lookup_diff/2,
+    delete_diffs/1
 ]).
 
 %% ------------------------------------------------------------------
@@ -38,9 +41,12 @@
 
 -define(SERVER, ?MODULE).
 -define(ETS, blockchain_state_channels_cache_ets).
-%% ets:fun2ms(fun({_, Pid}) when Pid == Self -> true end).
+-define(DIFF_ETS, blockchain_state_channels_diff_ets).
+%% ets:fun2ms(fun({_, Pid}) when Pid == self() -> true end).
 -define(SELECT_DELETE_PID(Pid), [{{'_', '$1'}, [{'==', '$1', {const, Pid}}], [true]}]).
 -define(ACTIVES_KEY, active_scs).
+%% ets:fun2ms(fun({{), SCID0}, _)}) when SCID == SCID0 -> true end).
+-define(SELECT_DELETE_DIFF(SCID), [{{{'_', '$1'}, '_'}, [{'==', '$1', {const, SCID}}], [true]}]).
 
 -record(state, {}).
 
@@ -113,6 +119,29 @@ overwrite_actives(Pids) ->
     true = ets:insert(?ETS, {?ACTIVES_KEY, Pids}),
     ok.
 
+-spec insert_diff(
+    HotspotID :: libp2p_crypto:pubkey_bin(),
+    SC :: blockchain_state_channel_v1:state_channel()
+) -> ok.
+insert_diff(HotspotID, SC) ->
+    SCID = blockchain_state_channel_v1:id(SC),
+    true = ets:insert(?DIFF_ETS, {{HotspotID, SCID}, SC}),
+    ok.
+
+-spec lookup_diff(
+    HotspotID :: libp2p_crypto:pubkey_bin(),
+    SCID :: blockchain_state_channel_v1:id()
+) -> {ok, blockchain_state_channel_v1:state_channel()} | {error, any()}.
+lookup_diff(HotspotID, SCID) ->
+    case ets:lookup(?DIFF_ETS, {HotspotID, SCID}) of
+        [] -> {error, not_found};
+        [{{HotspotID, SCID}, SC}] -> {ok, SC}
+    end.
+
+-spec delete_diffs(SCID :: blockchain_state_channel_v1:id()) -> pos_integer().
+delete_diffs(SCID) ->
+    ets:select_delete(?DIFF_ETS, ?SELECT_DELETE_DIFF(SCID)).
+
 %% ------------------------------------------------------------------
 %% gen_server Function Definitions
 %% ------------------------------------------------------------------
@@ -126,6 +155,7 @@ init(Args) ->
         {read_concurrency, true}
     ],
     _ = ets:new(?ETS, Opts),
+    _ = ets:new(?DIFF_ETS, Opts),
     {ok, #state{}}.
 
 handle_call(_Msg, _From, State) ->
@@ -144,8 +174,111 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 terminate(_Reason, _State) ->
+    lager:warning("terminate: ~p", [_Reason]),
+    _ = ets:delete(?ETS),
+    _ = ets:delete(?DIFF_ETS),
     ok.
 
 %% ------------------------------------------------------------------
 %% Internal Function Definitions
 %% ------------------------------------------------------------------
+
+%% ------------------------------------------------------------------
+%% EUNIT Tests
+%% ------------------------------------------------------------------
+-ifdef(TEST).
+
+-include_lib("eunit/include/eunit.hrl").
+
+hotspot_pid_test() ->
+    {ok, _} = application:ensure_all_started(lager),
+    {ok, CachePid} = ?MODULE:start_link(#{}),
+
+    Self = self(),
+    HotspotID0 = crypto:strong_rand_bytes(32),
+
+    % Test simple insert/lookup
+    ?assertEqual(ok, ?MODULE:insert_hotspot(HotspotID0, Self)),
+    ?assertEqual(Self, ?MODULE:lookup_hotspot(HotspotID0)),
+    ?assertEqual(undefined, ?MODULE:lookup_hotspot(crypto:strong_rand_bytes(32))),
+
+    % Test insert/delete
+    lists:foreach(
+        fun(_) ->
+            HotspotID = crypto:strong_rand_bytes(32),
+            ?assertEqual(ok, ?MODULE:insert_hotspot(HotspotID, Self)),
+            ?assertEqual(Self, ?MODULE:lookup_hotspot(HotspotID0))
+        end,
+        lists:seq(1, 2000) % We use 2k here as it is the number of actors per state channel at the moment
+    ),
+    ?assertEqual(2001, ?MODULE:delete_pids(Self)),
+    ?assertEqual([], ets:tab2list(?ETS)),
+
+    % Test lookup with is_process_alive=false
+    Pid = erlang:spawn(
+        fun() ->
+            receive _ -> ok end
+        end
+    ),
+    HotspotID1 = crypto:strong_rand_bytes(32),
+    ?assertEqual(ok, ?MODULE:insert_hotspot(HotspotID1, Pid)),
+    ?assertEqual(Pid, ?MODULE:lookup_hotspot(HotspotID1)),
+    HotspotID2 = crypto:strong_rand_bytes(32),
+    ?assertEqual(ok, ?MODULE:insert_hotspot(HotspotID2, Pid)),
+    ?assertEqual(Pid, ?MODULE:lookup_hotspot(HotspotID2)),
+    Pid ! stop,
+    ok = timer:sleep(10),
+    ?assertEqual(false, erlang:is_process_alive(Pid)),
+    ?assertEqual(undefined, ?MODULE:lookup_hotspot(HotspotID1)),
+    ok = timer:sleep(10),
+    ?assertEqual([], ets:tab2list(?ETS)),
+
+    ok = gen_server:stop(CachePid, normal, 100),
+    ok.
+
+actives_test() ->
+    {ok, _} = application:ensure_all_started(lager),
+    {ok, CachePid} = ?MODULE:start_link(#{}),
+
+    Self = self(),
+
+    ?assertEqual([], ?MODULE:lookup_actives()),
+    ?assertEqual(ok, ?MODULE:insert_actives(Self)),
+    ?assertEqual([Self], ?MODULE:lookup_actives()),
+    ?assertEqual(ok, ?MODULE:delete_actives(Self)),
+    ?assertEqual([], ?MODULE:lookup_actives()),
+    ?assertEqual(ok, ?MODULE:overwrite_actives([Self])),
+    ?assertEqual([Self], ?MODULE:lookup_actives()),
+
+    ok = gen_server:stop(CachePid, normal, 100),
+    ok.
+
+diff_test() ->
+    {ok, _} = application:ensure_all_started(lager),
+    {ok, CachePid} = ?MODULE:start_link(#{}),
+
+    HotspotID0 = crypto:strong_rand_bytes(32),
+    SCID = crypto:strong_rand_bytes(32),
+    SC = blockchain_state_channel_v1:new(SCID, crypto:strong_rand_bytes(32), 100),
+
+    ?assertEqual(ok, ?MODULE:insert_diff(HotspotID0, SC)),
+    ?assertEqual({ok, SC}, ?MODULE:lookup_diff(HotspotID0, SCID)),
+    ?assertEqual({error, not_found}, ?MODULE:lookup_diff(crypto:strong_rand_bytes(32), SCID)),
+    ?assertEqual({error, not_found}, ?MODULE:lookup_diff(HotspotID0, crypto:strong_rand_bytes(32))),
+
+    lists:foreach(
+        fun(_) ->
+            HotspotID = crypto:strong_rand_bytes(32),
+            ?assertEqual(ok, ?MODULE:insert_diff(HotspotID, SC)),
+            ?assertEqual({ok, SC}, ?MODULE:lookup_diff(HotspotID, SCID))
+        end,
+        lists:seq(1, 100)
+    ),
+
+    ?assertEqual(101, ?MODULE:delete_diffs(SCID)),
+    ?assertEqual([], ets:tab2list(?DIFF_ETS)),
+
+    ok = gen_server:stop(CachePid, normal, 100),
+    ok.
+
+-endif.
