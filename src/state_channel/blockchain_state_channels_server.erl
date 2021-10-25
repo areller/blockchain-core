@@ -432,8 +432,7 @@ get_new_active() ->
 get_new_active(
     #state{
         height=BlockHeight,
-        state_channels=SCs,
-        sc_version=SCVersion
+        state_channels=SCs
     }=State0
 ) ->
     lager:info("getting new active SC at height ~p", [BlockHeight]),
