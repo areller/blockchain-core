@@ -285,39 +285,19 @@ packet(
         skewed=Skewed0,
         db=DB,
         owner={_Owner, OwnerSigFun},
-        dc_payload_size=DCPayloadSize,
-        sc_version=SCVer,
-        max_actors_allowed = MaxActorsAllowed,
         bloom=Bloom
     }=State0
 ) ->
     Packet = blockchain_state_channel_packet_v1:packet(SCPacket),
     Payload = blockchain_helium_packet_v1:payload(Packet),
-    HotspotID = blockchain_state_channel_packet_v1:hotspot(SCPacket),
-    case SCVer > 1 andalso bloom:check_and_set(Bloom, Payload) of
+    case bloom:check_and_set(Bloom, Payload) of
         true ->
-            lager:debug("skewed already updated with ~p (sc version=~p)", [Payload, SCVer]),
+            lager:debug("skewed already updated with ~p", [Payload]),
             State0;
         false ->
             lager:debug("updating skewed with ~p", [Payload]),
             {SC1, Skewed1} = blockchain_state_channel_v1:add_payload(Payload, SC0, Skewed0),
-            SC2 = case SCVer of
-                2 ->
-                    %% we don't update the state channel summary here
-                    %% it happens in `send_purchase` for v2 SCs
-                    SC1;
-                _ ->
-                    {ok, SC} = 
-                        try_update_summary(
-                            SC1, 
-                            HotspotID,
-                            erlang:byte_size(Payload),
-                            DCPayloadSize,
-                            MaxActorsAllowed
-                        ),
-                    SC
-            end,
-            SignedSC = blockchain_state_channel_v1:sign(SC2, OwnerSigFun),
+            SignedSC = blockchain_state_channel_v1:sign(SC1, OwnerSigFun),
             ok = blockchain_state_channel_v1:save(DB, SignedSC, Skewed1),
             State0#state{state_channel=SignedSC, skewed=Skewed1}
     end.
