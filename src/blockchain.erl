@@ -3009,7 +3009,8 @@ blocks_test_() ->
                                                election_epoch => 1,
                                                epoch_start => 0,
                                                seen_votes => [],
-                                               bba_completion => <<>>
+                                               bba_completion => <<>>,
+                                               poc_keys => []
                                               }),
              Hash = blockchain_block:hash_block(Block),
              ok = add_block(Block, Chain),
@@ -3087,7 +3088,8 @@ get_block_test_() ->
                                                election_epoch => 1,
                                                epoch_start => 0,
                                                seen_votes => [],
-                                               bba_completion => <<>>
+                                               bba_completion => <<>>,
+                                               poc_keys => []
                                               }),
              Hash = blockchain_block:hash_block(Block),
              ok = add_block(Block, Chain),
