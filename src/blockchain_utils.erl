@@ -803,7 +803,7 @@ fold_condition_checks_bad_test() ->
            {fun() -> <<"blort">> == <<"blort">> end, {error, blort_isnt_blort}}],
     ?assertEqual({error, '10_not_greater_than_100'}, fold_condition_checks(Bad)).
 
-pfind_test() ->
+pfind_test_() ->
     {
         spawn,
         fun() ->
