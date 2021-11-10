@@ -120,7 +120,7 @@ init(Args) ->
     Owner = maps:get(owner, Args),
     {_, OwnerSigFun} = Owner,
     ok = blockchain_event:add_handler(self()),
-    lager:info("started ~p", [blockchain_utils:addr2name(ID)]),
+    lager:info("started ~p", [blockchain_state_channel_v1:name(SC)]),
     State = #state{
         parent = Parent,
         id = ID,
@@ -156,9 +156,9 @@ handle_info({blockchain_event, {new_chain, Chain}}, State) ->
     {noreply, State#state{chain=Chain}};
 handle_info(
     {blockchain_event, {add_block, _BlockHash, _Syncing, Ledger}},
-    #state{id=ID, state_channel=SC, owner={Owner, OwnerSigFun}}=State
+    #state{state_channel=SC, owner={Owner, OwnerSigFun}}=State
 ) ->
-    Name = blockchain_utils:addr2name(ID),
+    Name = blockchain_state_channel_v1:name(SC),
     {ok, Height} = blockchain_ledger_v1:current_height(Ledger),
     ExpireAt = blockchain_state_channel_v1:expire_at_block(SC),
     lager:debug("got block ~p for ~p expires at ~p", [Height, Name, ExpireAt]),
@@ -185,15 +185,14 @@ handle_info(_Msg, State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
-terminate(Reason, #state{id=ID, state_channel=SC, skewed=Skewed, db=DB, owner={_Owner, OwnerSigFun}}=_State) ->
+terminate(Reason, #state{state_channel=SC, skewed=Skewed, db=DB, owner={_Owner, OwnerSigFun}}=_State) ->
     DeletedPids = blockchain_state_channels_cache:delete_pids(self()),
-    DeletedDiffs = blockchain_state_channels_cache:delete_diffs(ID),
     SignedSC = blockchain_state_channel_v1:sign(SC, OwnerSigFun),
     ok = blockchain_state_channels_server:update_state_channel(SignedSC),
     ok = blockchain_state_channel_v1:save(DB, SignedSC, Skewed),
     lager:info(
-        "terminate ~p for : ~p, deleted ~p Pids, ~p Diffs",
-        [blockchain_utils:addr2name(ID), Reason, DeletedPids, DeletedDiffs]
+        "terminate ~p for : ~p, deleted ~p Pids",
+        [blockchain_state_channel_v1:name(SC), Reason, DeletedPids]
     ),
     ok.
 
@@ -209,7 +208,6 @@ offer(
     Offer,
     HandlerPid,
     #state{
-        id = SCID,
         state_channel = SC,
         skewed=Skewed,
         db=DB,
