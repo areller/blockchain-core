@@ -264,7 +264,8 @@ offer(
                         SignedPurchaseSC,
                         HotspotID,
                         PacketHash,
-                        Region
+                        Region,
+                        OwnerSigFun
                     ),
                     {noreply, State0#state{state_channel=SignedPurchaseSC}}
             end
