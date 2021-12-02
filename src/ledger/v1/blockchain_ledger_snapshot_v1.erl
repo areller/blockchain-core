@@ -48,7 +48,6 @@
 %% the right thing for the spots and easy to work around elsewhere.
 -define(min_height, 2).
 
--type h3() :: term(). % TODO actual type
 
 %% this is temporary, something to work with easily while we nail the
 %% format and functionality down.  once it's final we can move on to a
