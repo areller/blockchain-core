@@ -72,7 +72,7 @@
         ouis              => [term()], % TODO Be more specific
         subnets           => [term()], % TODO Be more specific
         oui_counter       => pos_integer(),
-        hexes             => [{h3(), [binary()]} | {list, #{h3() => pos_integer()}}],
+        hexes             => [{h3:h3_index(), [binary()]} | {list, #{h3:h3_index() => pos_integer()}}],
         h3dex             => [{integer(), [binary()]}],
         state_channels    => [{binary(), state_channel()}],
         blocks            => [blockchain_block:block()],
