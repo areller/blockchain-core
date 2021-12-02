@@ -213,7 +213,7 @@ check_is_valid_poc(POCVersion, Txn, Chain) ->
                                           "poc_receipts error get_block, last_challenge: ~p, reason: ~p",
                                           [PrePocBlockHeight, Reason]),
                             Error;
-                        {ok, #block_info{height = BlockHeight,
+                        {ok, #block_info_v2{height = BlockHeight,
                                          time = BlockTime,
                                          pocs = BlockPoCs}} ->
                                     %% check the onion key is in the block
