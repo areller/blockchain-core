@@ -81,12 +81,17 @@ term(<<?TAG_LARGE_TUPLE_EXT  , Rest/binary>>) -> large_tuple_ext(Rest);
 term(<<?TAG_NIL_EXT          , Rest/binary>>) -> {ok, {[], Rest}};
 term(<<?TAG_STRING_EXT       , Rest/binary>>) -> string_ext(Rest);
 term(<<?TAG_LIST_EXT         , Rest/binary>>) -> list_ext(Rest);
-term(<<?TAG_BINARY_EXT       , _/binary>>   ) -> {error, {not_implemented, 'BINARY_EXT'}}; % TODO
+term(<<?TAG_BINARY_EXT       , Rest/binary>>) -> binary_ext(Rest);
 term(<<?TAG_SMALL_BIG_EXT    , Rest/binary>>) -> small_big_ext(Rest);
 term(<<?TAG_LARGE_BIG_EXT    , Rest/binary>>) -> large_big_ext(Rest);
 term(<<?TAG_MAP_EXT          , Rest/binary>>) -> map_ext(Rest);
 term(<<Tag:8                 , _/binary>>   ) -> {error, {unsupported_tag, Tag}};
 term(<<Bin/binary>>                         ) -> {error, {malformed_term, Bin}}.
+
+binary_ext(<<Len:32, Bin:Len/binary, Rest/binary>>) ->
+    {ok, {Bin, Rest}};
+binary_ext(<<Bin/binary>>) ->
+    {error, {malformed_binary_ext, Bin}}.
 
 %% MAP_EXT
 %% 4       N
@@ -358,15 +363,14 @@ term_test_() ->
             [{}],
             [{k, v}],
             [{"k", "v"}],
-
-            %[<<"foo">>],
-            %[{<<"k">>, <<"v">>}],
-
+            [<<"foo">>],
+            [{<<"k">>, <<"v">>}],
             #{a => 1},
             #{1 => a},
             #{0 => 1},
             #{k => v},
-            #{"k" => "v"}
+            #{"k" => "v"},
+            #{<<"k">> => <<"v">>}
         ],
         Opts <- [[], [compressed]]
     ].
