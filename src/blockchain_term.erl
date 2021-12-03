@@ -43,6 +43,7 @@
 -define(TAG_LIST_EXT, 108).
 -define(TAG_BINARY_EXT, 109).
 -define(TAG_SMALL_BIG_EXT, 110).
+-define(TAG_MAP_EXT, 116).
 
 -spec from_bin(binary()) -> {ok, t()} | {error, error()}.
 from_bin(<<Bin/binary>>) ->
@@ -78,8 +79,44 @@ term(<<?TAG_STRING_EXT       , Rest/binary>>) -> string_ext(Rest);
 term(<<?TAG_LIST_EXT         , Rest/binary>>) -> list_ext(Rest);
 term(<<?TAG_BINARY_EXT       , _/binary>>   ) -> {error, {not_implemented, 'BINARY_EXT'}}; % TODO
 term(<<?TAG_SMALL_BIG_EXT    , Rest/binary>>) -> small_big_ext(Rest);
+term(<<?TAG_MAP_EXT          , Rest/binary>>) -> map_ext(Rest);
 term(<<Tag:8                 , _/binary>>   ) -> {error, {unsupported_tag, Tag}};
 term(<<Bin/binary>>                         ) -> {error, {malformed_term, Bin}}.
+
+%% MAP_EXT
+%% 4       N
+%% Arity   Pairs
+%%
+%% Encodes a map. The Arity field is an unsigned 4 byte integer in big-endian
+%% format that determines the number of key-value pairs in the map. Key and
+%% value pairs (Ki => Vi) are encoded in section Pairs in the following order:
+%% K1, V1, K2, V2,..., Kn, Vn. Duplicate keys are not allowed within the same
+%% map.
+map_ext(<<Arity:32, Rest0/binary>>) ->
+    case map_pairs(Arity, [], Rest0) of
+        {ok, {Pairs, Rest1}} ->
+            Term = maps:from_list(Pairs), % TODO Handle errors?
+            {ok, {Term, Rest1}};
+        {error, _}=Err ->
+            Err
+    end;
+map_ext(<<Bin/binary>>) ->
+    {error, {malformed_map, Bin}}.
+
+map_pairs(0, Pairs, <<Rest/binary>>) ->
+    {ok, {Pairs, Rest}};
+map_pairs(N, Pairs, <<Rest0/binary>>) ->
+    case term(Rest0) of
+        {ok, {Key, Rest1}} ->
+            case term(Rest1) of
+                {ok, {Val, Rest2}} ->
+                    map_pairs(N - 1, [{Key, Val} | Pairs], Rest2);
+                {error, _}=Err ->
+                    Err
+            end;
+        {error, _}=Err ->
+            Err
+    end.
 
 %% SMALL_INTEGER_EXT
 %% 1   1
@@ -235,7 +272,14 @@ term_test_() ->
             9999999999999999999999999999999999999999999999999999999999999999999,
             -9999999999999999999999999999999999999999999999999999999999999999999,
             [a | b],
-            [1000, 2000, 3000, 4000 | improper_list_tail]
+            [1000, 2000, 3000, 4000 | improper_list_tail],
+            [foo],
+            ["foo"],
+            #{a => 1},
+            #{1 => a},
+            #{0 => 1},
+            #{k => v},
+            #{"k" => "v"}
         ],
         Opts <- [[], [compressed]]
     ].
