@@ -29,7 +29,8 @@
     | {malformed_list_ext, binary()}
     | {malformed_atom_ext, binary()}
     | {malformed_string_ext, binary()}
-    | {malformed_big_int, binary()}
+    | {malformed_small_big_int, binary()}
+    | {malformed_large_big_int, binary()}
     | {malformed_big_int_sign, integer()}
     .
 
@@ -43,6 +44,7 @@
 -define(TAG_LIST_EXT, 108).
 -define(TAG_BINARY_EXT, 109).
 -define(TAG_SMALL_BIG_EXT, 110).
+-define(TAG_LARGE_BIG_EXT, 111).
 -define(TAG_MAP_EXT, 116).
 
 -spec from_bin(binary()) -> {ok, t()} | {error, error()}.
@@ -79,6 +81,7 @@ term(<<?TAG_STRING_EXT       , Rest/binary>>) -> string_ext(Rest);
 term(<<?TAG_LIST_EXT         , Rest/binary>>) -> list_ext(Rest);
 term(<<?TAG_BINARY_EXT       , _/binary>>   ) -> {error, {not_implemented, 'BINARY_EXT'}}; % TODO
 term(<<?TAG_SMALL_BIG_EXT    , Rest/binary>>) -> small_big_ext(Rest);
+term(<<?TAG_LARGE_BIG_EXT    , Rest/binary>>) -> large_big_ext(Rest);
 term(<<?TAG_MAP_EXT          , Rest/binary>>) -> map_ext(Rest);
 term(<<Tag:8                 , _/binary>>   ) -> {error, {unsupported_tag, Tag}};
 term(<<Bin/binary>>                         ) -> {error, {malformed_term, Bin}}.
@@ -217,7 +220,35 @@ string_ext(<<Len:16, Characters:Len/binary, Rest/binary>>) ->
 string_ext(<<Bin/binary>>) ->
     {error, {malformed_string_ext, Bin}}.
 
+
+%% SMALL_BIG_EXT
+%% 1       1   1       n
+%% 110     n   Sign    d(0) ... d(n-1)
+%%
+%% Bignums are stored in unary form with a Sign byte, that is, 0 if the bignum
+%% is positive and 1 if it is negative. The digits are stored with the least
+%% significant byte stored first. To calculate the integer, the following
+%% formula can be used:
+%%
+%% B = 256
+%% (d0*B^0 + d1*B^1 + d2*B^2 + ... d(N-1)*B^(n-1))
 small_big_ext(<<N:8, Sign:8, Data:N/binary, Rest/binary>>) ->
+    big_ext(Sign, Data, <<Rest/binary>>);
+small_big_ext(<<Bin/binary>>) ->
+    {error, {malformed_small_big_int, Bin}}.
+
+%% LARGE_BIG_EXT
+%% 1       4   1       n
+%% 111     n   Sign    d(0) ... d(n-1)
+%%
+%% Same as SMALL_BIG_EXT except that the length field is an unsigned 4 byte
+%% integer.
+large_big_ext(<<N:32, Sign:8, Data:N/binary, Rest/binary>>) ->
+    big_ext(Sign, Data, <<Rest/binary>>);
+large_big_ext(<<Bin/binary>>) ->
+    {error, {malformed_large_big_int, Bin}}.
+
+big_ext(Sign, <<Data/binary>>, <<Rest/binary>>) ->
     case big_int_sign_to_multiplier(Sign) of
         {ok, Multiplier} ->
             case big_int_data(Data, 0, 0) of
@@ -229,9 +260,7 @@ small_big_ext(<<N:8, Sign:8, Data:N/binary, Rest/binary>>) ->
             end;
         {error, _}=Err ->
             Err
-    end;
-small_big_ext(<<Bin/binary>>) ->
-    {error, {malformed_big_int, Bin}}.
+    end.
 
 big_int_sign_to_multiplier(0) -> {ok,  1};
 big_int_sign_to_multiplier(1) -> {ok, -1};
@@ -275,6 +304,10 @@ term_test_() ->
             [1000, 2000, 3000, 4000 | improper_list_tail],
             [foo],
             ["foo"],
+
+            %% TODO A non-hand-wavy LARGE_BIG_EXT
+            ceil(math:pow(10, 300)) * ceil(math:pow(10, 300)) * ceil(math:pow(10, 300)),
+
             #{a => 1},
             #{1 => a},
             #{0 => 1},
