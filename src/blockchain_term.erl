@@ -39,6 +39,7 @@
 -define(TAG_INTEGER_EXT, 98).
 -define(TAG_ATOM_EXT, 100). % deprecated
 -define(TAG_SMALL_TUPLE_EXT, 104).
+-define(TAG_LARGE_TUPLE_EXT, 105).
 -define(TAG_NIL_EXT, 106).
 -define(TAG_STRING_EXT, 107).
 -define(TAG_LIST_EXT, 108).
@@ -75,7 +76,8 @@ term(<<?TAG_TERM_COMPRESSED  , Rest/binary>>) -> term_compressed(Rest);
 term(<<?TAG_SMALL_INTEGER_EXT, Rest/binary>>) -> small_integer_ext(Rest);
 term(<<?TAG_INTEGER_EXT      , Rest/binary>>) -> integer_ext(Rest);
 term(<<?TAG_ATOM_EXT         , Rest/binary>>) -> atom_ext(Rest);
-term(<<?TAG_SMALL_TUPLE_EXT  , _/binary>>   ) -> {error, {not_implemented, 'SMALL_TUPLE_EXT'}}; % TODO
+term(<<?TAG_SMALL_TUPLE_EXT  , Rest/binary>>) -> small_tuple_ext(Rest);
+term(<<?TAG_LARGE_TUPLE_EXT  , Rest/binary>>) -> large_tuple_ext(Rest);
 term(<<?TAG_NIL_EXT          , Rest/binary>>) -> {ok, {[], Rest}};
 term(<<?TAG_STRING_EXT       , Rest/binary>>) -> string_ext(Rest);
 term(<<?TAG_LIST_EXT         , Rest/binary>>) -> list_ext(Rest);
@@ -196,6 +198,49 @@ list_elements(N, <<Rest0/binary>>, Xs) ->
 drop_tail_nil([X]) -> X;
 drop_tail_nil([X | Xs]) -> [X | drop_tail_nil(Xs)].
 
+
+%% SMALL_TUPLE_EXT
+%% 1       1       N
+%% 104     Arity   Elements
+%%
+%% Encodes a tuple. The Arity field is an unsigned byte that determines how
+%% many elements that follows in section Elements.
+small_tuple_ext(<<Arity:8, Rest/binary>>) ->
+    tuple_ext(Arity, Rest);
+small_tuple_ext(<<Bin/binary>>) ->
+    {error, {malformed_small_tuple_ext, Bin}}.
+
+%% LARGE_TUPLE_EXT
+%% 1       4       N
+%% 105     Arity   Elements
+%%
+%% Same as SMALL_TUPLE_EXT except that Arity is an unsigned 4 byte integer in
+%% big-endian format.
+large_tuple_ext(<<Arity:32/integer-unsigned-big, Rest/binary>>) ->
+    tuple_ext(Arity, Rest);
+large_tuple_ext(<<Bin/binary>>) ->
+    {error, {malformed_large_tuple_ext, Bin}}.
+
+tuple_ext(Arity, <<Rest0/binary>>) ->
+    case tuple_elements(Arity, [], Rest0) of
+        {ok, {Elements, Rest1}} ->
+            Term = list_to_tuple(Elements),
+            Rest = Rest1,
+            {ok, {Term, Rest}};
+        {error, _}=Err ->
+            Err
+    end.
+
+tuple_elements(0, Xs, <<Rest/binary>>) ->
+    {ok, {lists:reverse(Xs), Rest}};
+tuple_elements(N, Xs, <<Rest0/binary>>) ->
+    case term(Rest0) of
+        {ok, {X, Rest1}} ->
+            tuple_elements(N - 1, [X | Xs], Rest1);
+        {error, _}=Err ->
+            Err
+    end.
+
 %% ATOM_EXT (deprecated):
 %% ---------------------
 %% 1 	2 	    Len
@@ -307,6 +352,15 @@ term_test_() ->
 
             %% TODO A non-hand-wavy LARGE_BIG_EXT
             ceil(math:pow(10, 300)) * ceil(math:pow(10, 300)) * ceil(math:pow(10, 300)),
+
+            {},
+            {1, 2, 3},
+            [{}],
+            [{k, v}],
+            [{"k", "v"}],
+
+            %[<<"foo">>],
+            %[{<<"k">>, <<"v">>}],
 
             #{a => 1},
             #{1 => a},
