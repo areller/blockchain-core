@@ -2064,6 +2064,15 @@ purge_pocs(Ledger) ->
     ).
 
 maybe_gc_pocs(Chain, Ledger) ->
+    case blockchain:config(?poc_challenger_type, Ledger) of
+        {ok, validator} ->
+            maybe_gc_pocs(Chain, Ledger, validator);
+        _ ->
+            maybe_gc_pocs(Chain, Ledger, undefined)
+    end.
+maybe_gc_pocs(_Chain, _Ledger, validator) ->
+    ok;
+maybe_gc_pocs(Chain, Ledger, _) ->
     {ok, Height} = current_height(Ledger),
     Version = case ?MODULE:config(?poc_version, Ledger) of
                   {ok, V} -> V;
