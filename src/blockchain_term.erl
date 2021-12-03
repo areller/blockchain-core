@@ -50,8 +50,8 @@ from_bin(<<Bin/binary>>) ->
     case envelope(Bin) of
         {ok, {Term, <<>>}} ->
             {ok, Term};
-        {ok, {_, <<Bin/binary>>}} ->
-            {error, {trailing_data_remains, Bin}};
+        {ok, {_, <<Rest/binary>>}} ->
+            {error, {trailing_data_remains, Rest}};
         {error, _}=Err ->
             Err
     end.
