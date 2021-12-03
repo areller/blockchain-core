@@ -20,6 +20,8 @@
 -define(TAG_LIST_EXT, 108).
 -define(TAG_BINARY_EXT, 109).
 -define(TAG_SMALL_BIG_EXT, 110).
+-define(TAG_LARGE_BIG_EXT, 111).
+-define(TAG_MAP_EXT, 116).
 
 -spec from_bin(binary()) -> t().
 from_bin(<<Bin/binary>>) ->
@@ -98,7 +100,7 @@ decode_value(<<?TAG_SMALL_BIG_EXT, N:8/integer, Sign:8/integer, Int:N/binary, Re
         X ->
             {error, {invalid_sign_for_bigint, Sign, X}}
     end;
-decode_value(<<111, N:32/integer-unsigned-big, Sign:8/integer, Int:N/binary, Rest/binary>>) ->
+decode_value(<<?TAG_LARGE_BIG_EXT, N:32/integer-unsigned-big, Sign:8/integer, Int:N/binary, Rest/binary>>) ->
     %% TODO Why bother calling decode_bigint before checking Sign?
     case decode_bigint(Int, 0, 0) of
         X when Sign == 0 ->
@@ -106,7 +108,7 @@ decode_value(<<111, N:32/integer-unsigned-big, Sign:8/integer, Int:N/binary, Res
         X when Sign == 1 ->
             {ok, {X * -1, Rest}}
     end;
-decode_value(<<116, Arity:32/integer-unsigned-big, MapAndRest/binary>>) ->
+decode_value(<<?TAG_MAP_EXT, Arity:32/integer-unsigned-big, MapAndRest/binary>>) ->
     decode_map(MapAndRest, Arity, #{});
 %% TODO 107 - what is it? string?
 decode_value(<<Code/integer, _Rest/binary>>) ->
