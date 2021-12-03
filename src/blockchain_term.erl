@@ -14,10 +14,10 @@
 ]).
 
 -type t() ::
-      atom()
+      integer()
+    | atom()
     | string()
-    | integer()
-    | []
+    | [t()]
     .
 
 -type error() ::
