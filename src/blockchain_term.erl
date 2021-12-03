@@ -222,7 +222,7 @@ large_tuple_ext(<<Bin/binary>>) ->
     {error, {malformed_large_tuple_ext, Bin}}.
 
 tuple_ext(Arity, <<Rest0/binary>>) ->
-    case tuple_elements(Arity, [], Rest0) of
+    case tuple_elements(Arity, Rest0, []) of
         {ok, {Elements, Rest1}} ->
             Term = list_to_tuple(Elements),
             Rest = Rest1,
@@ -231,12 +231,12 @@ tuple_ext(Arity, <<Rest0/binary>>) ->
             Err
     end.
 
-tuple_elements(0, Xs, <<Rest/binary>>) ->
+tuple_elements(0, <<Rest/binary>>, Xs) ->
     {ok, {lists:reverse(Xs), Rest}};
-tuple_elements(N, Xs, <<Rest0/binary>>) ->
+tuple_elements(N, <<Rest0/binary>>, Xs) ->
     case term(Rest0) of
         {ok, {X, Rest1}} ->
-            tuple_elements(N - 1, [X | Xs], Rest1);
+            tuple_elements(N - 1, Rest1, [X | Xs]);
         {error, _}=Err ->
             Err
     end.
