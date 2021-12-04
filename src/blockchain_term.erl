@@ -34,6 +34,8 @@
     | {malformed_big_int_sign, integer()}
     .
 
+-define(VERSION, 131).
+
 -define(TAG_TERM_COMPRESSED, 80).
 -define(TAG_SMALL_INTEGER_EXT, 97).
 -define(TAG_INTEGER_EXT, 98).
@@ -61,7 +63,7 @@ from_bin(<<Bin/binary>>) ->
 
 %% 1       N
 %% 131     Data
-envelope(<<131, Data/binary>>) ->
+envelope(<<?VERSION, Data/binary>>) ->
     term(Data);
 envelope(<<Version:8, _/binary>>) ->
     {error, {unsupported_version, Version}};
