@@ -44,6 +44,8 @@ list_ext(<<Len:32/integer-unsigned-big, Data/binary>>) ->
     case decode_list(Data, Len, []) of
         {ok, {T, <<>>}} ->
             {ok, T};
+        {ok, {_, <<Rest/binary>>}} ->
+            {error, {trailing_data_remains, Rest}};
         {error, _}=Err ->
             Err
     end.
@@ -207,6 +209,7 @@ binary_to_proplist_test_() ->
             #{k => v},
             #{},
             [],
+            [a | terrible_list],
 
             % strings unsupported
             "",
