@@ -176,8 +176,17 @@ list_ext(<<Len:32/integer-unsigned-big, Rest0/binary>>) ->
                 {ok, {Tail, Rest2}} ->
                     Elements1 =
                         case Elements0 of
-                            [] -> [];
-                            [_|_] -> drop_tail_nil(Elements0 ++ [Tail])
+                            [] ->
+                                [];
+                            [_|_] ->
+                                case Tail of
+                                    [] ->
+                                        %% Don't bother swapping tails if the
+                                        %% replacement is already a nil.
+                                        Elements0;
+                                    _ ->
+                                        drop_tail_nil(Elements0 ++ [Tail])
+                                end
                         end,
                     Term = Elements1,
                     Rest = Rest2,
@@ -204,7 +213,6 @@ list_elements(N, <<Rest0/binary>>, Xs) ->
 %% XXX Caller must ensure at least 2 elements!
 drop_tail_nil([X]) -> X;
 drop_tail_nil([X | Xs]) -> [X | drop_tail_nil(Xs)].
-
 
 %% SMALL_TUPLE_EXT
 %% 1       1       N
