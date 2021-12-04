@@ -18,6 +18,7 @@
     | atom()
     | string()
     | [t()]
+    | nonempty_improper_list(t(), t())
     .
 
 -type error() ::
@@ -26,6 +27,7 @@
     | {malformed_term, binary()}
     | {unsupported_tag, integer()}
     | {uncompressed_data_bad_size, {expected, integer(), actual, integer()}}
+    | {malformed_list, empty_with_non_nil_tail}
     | {malformed_list_ext, binary()}
     | {malformed_atom_ext, binary()}
     | {malformed_string_ext, binary()}
@@ -165,32 +167,21 @@ term_compressed(<<UncompressedSize:32/integer-unsigned-big, ZlibCompressedData/b
                     {expected, UncompressedSize, actual, bit_size(Data)}}} % TODO or byte?
     end.
 
-
 %% LIST_EXT
 %% 1       4
 %% 108     Length  Elements    Tail
 list_ext(<<Len:32/integer-unsigned-big, Rest0/binary>>) ->
     case list_elements(Len, Rest0, []) of
-        {ok, {Elements0, Rest1}} ->
+        {ok, {Elements, Rest1}} ->
             case term(Rest1) of
                 {ok, {Tail, Rest2}} ->
-                    Elements1 =
-                        case Elements0 of
-                            [] ->
-                                [];
-                            [_|_] ->
-                                case Tail of
-                                    [] ->
-                                        %% Don't bother swapping tails if the
-                                        %% replacement is already a nil.
-                                        Elements0;
-                                    _ ->
-                                        drop_tail_nil(Elements0 ++ [Tail])
-                                end
-                        end,
-                    Term = Elements1,
-                    Rest = Rest2,
-                    {ok, {Term, Rest}};
+                    R = Rest2,
+                    case {Elements, Tail} of
+                        {[], []} -> {ok, {[], R}};
+                        {_ , []} -> {ok, {Elements, R}};
+                        {[], _ } -> {error, {malformed_list, empty_with_non_nil_tail}};
+                        {_ , _ } -> {ok, {list_improper(Elements ++ [Tail]), R}}
+                    end;
                 {error, _}=Err ->
                     Err
             end;
@@ -211,8 +202,9 @@ list_elements(N, <<Rest0/binary>>, Xs) ->
     end.
 
 %% XXX Caller must ensure at least 2 elements!
-drop_tail_nil([X]) -> X;
-drop_tail_nil([X | Xs]) -> [X | drop_tail_nil(Xs)].
+-spec list_improper(nonempty_list(A | B)) -> nonempty_improper_list(A, B) | A | B.
+list_improper([X]) -> X;
+list_improper([X | Xs]) -> [X | list_improper(Xs)].
 
 %% SMALL_TUPLE_EXT
 %% 1       1       N
