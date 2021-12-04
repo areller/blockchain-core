@@ -1,7 +1,6 @@
 %%%
 %%% https://www.erlang.org/doc/apps/erts/erl_ext_dist.html
 %%%
-%%% TODO -spec next(State :: binary()) -> {ok, none | {some, {term(), State :: binary()}}} | {error, error()}
 
 -module(blockchain_term).
 
@@ -17,12 +16,16 @@
       integer()
     | atom()
     | string()
+    | binary()
+    | tuple()
     | [t()]
     | nonempty_improper_list(t(), t())
+    | #{t() => t()}
     .
 
 -type error() ::
-      {malformed_envelope, binary()}
+      {trailing_data_remains, binary()}
+    | {malformed_envelope, binary()}
     | {unsupported_version, integer()}
     | {malformed_term, binary()}
     | {unsupported_tag, integer()}
@@ -58,6 +61,8 @@ from_bin(<<Bin/binary>>) ->
         {ok, {Term, <<>>}} ->
             {ok, Term};
         {ok, {_, <<Rest/binary>>}} ->
+            %% TODO Would it make any sense to return OK here?
+            %%      Let's say if we concatenated multiple t2b outputs.
             {error, {trailing_data_remains, Rest}};
         {error, _}=Err ->
             Err
@@ -65,6 +70,7 @@ from_bin(<<Bin/binary>>) ->
 
 %% 1       N
 %% 131     Data
+-spec envelope(binary()) -> {ok, {t(), binary()}} | {error, error()}.
 envelope(<<?VERSION, Data/binary>>) ->
     term(Data);
 envelope(<<Version:8, _/binary>>) ->
@@ -76,6 +82,7 @@ envelope(<<Bin/binary>>) ->
 %% -----
 %% 1       N
 %% Tag     Data
+-spec term(binary()) -> {ok, {t(), binary()}} | {error, error()}.
 term(<<?TAG_TERM_COMPRESSED  , Rest/binary>>) -> term_compressed(Rest);
 term(<<?TAG_SMALL_INTEGER_EXT, Rest/binary>>) -> small_integer_ext(Rest);
 term(<<?TAG_INTEGER_EXT      , Rest/binary>>) -> integer_ext(Rest);
@@ -92,6 +99,8 @@ term(<<?TAG_MAP_EXT          , Rest/binary>>) -> map_ext(Rest);
 term(<<Tag:8                 , _/binary>>   ) -> {error, {unsupported_tag, Tag}};
 term(<<Bin/binary>>                         ) -> {error, {malformed_term, Bin}}.
 
+-spec binary_ext(binary()) ->
+    {ok, {binary(), binary()}} | {error, {malformed_binary_ext, binary()}}.
 binary_ext(<<Len:32, Bin:Len/binary, Rest/binary>>) ->
     {ok, {Bin, Rest}};
 binary_ext(<<Bin/binary>>) ->
@@ -106,7 +115,8 @@ binary_ext(<<Bin/binary>>) ->
 %% value pairs (Ki => Vi) are encoded in section Pairs in the following order:
 %% K1, V1, K2, V2,..., Kn, Vn. Duplicate keys are not allowed within the same
 %% map.
-map_ext(<<Arity:32, Rest0/binary>>) ->
+-spec map_ext(binary()) -> {ok, {#{t() => t()}, binary()}} | {error, error()}.
+map_ext(<<Arity:32/integer-unsigned-big, Rest0/binary>>) ->
     case map_pairs(Arity, [], Rest0) of
         {ok, {Pairs, Rest1}} ->
             Term = maps:from_list(Pairs), % TODO Handle errors?
@@ -117,6 +127,8 @@ map_ext(<<Arity:32, Rest0/binary>>) ->
 map_ext(<<Bin/binary>>) ->
     {error, {malformed_map, Bin}}.
 
+-spec map_pairs(non_neg_integer(), [{t(), t()}], binary()) ->
+    {ok, {[{t(), t()}], binary()}} | {error, error()}.
 map_pairs(0, Pairs, <<Rest/binary>>) ->
     {ok, {Pairs, Rest}};
 map_pairs(N, Pairs, <<Rest0/binary>>) ->
@@ -133,13 +145,23 @@ map_pairs(N, Pairs, <<Rest0/binary>>) ->
     end.
 
 %% SMALL_INTEGER_EXT
-%% 1   1
-%% 97  Int
+%% 1
+%% Int
+-spec small_integer_ext(binary()) ->
+    {ok, {integer(), binary()}} | {error, {malformed_small_integer_ext, binary()}}.
 small_integer_ext(<<Int/integer, Rest/binary>>) ->
     {ok, {Int, Rest}};
 small_integer_ext(<<Bin/binary>>) ->
     {error, {malformed_small_integer_ext, Bin}}.
 
+
+%% INTEGER_EXT
+%% 4
+%% Int
+%%
+%% Signed 32-bit integer in big-endian format.
+-spec integer_ext(binary()) ->
+    {ok, {integer(), binary()}} | {error, {malformed_small_integer_ext, binary()}}.
 integer_ext(<<Int:32/integer-big, Rest/binary>>) ->
     {ok, {Int, Rest}};
 integer_ext(<<Bin/binary>>) ->
@@ -156,6 +178,7 @@ integer_ext(<<Bin/binary>>) ->
 %% 1    Uncompressed Size
 %% Tag  Data
 %%
+-spec term_compressed(binary()) -> {ok, {t(), binary()}} | {error, error()}.
 term_compressed(<<UncompressedSize:32/integer-unsigned-big, ZlibCompressedData/binary>>) ->
     % TODO More kinds of errors? Exceptions?
     case zlib:uncompress(ZlibCompressedData) of
@@ -168,8 +191,10 @@ term_compressed(<<UncompressedSize:32/integer-unsigned-big, ZlibCompressedData/b
     end.
 
 %% LIST_EXT
-%% 1       4
-%% 108     Length  Elements    Tail
+%% 4
+%% Length  Elements    Tail
+-spec list_ext(binary()) ->
+    {ok, {maybe_improper_list(t(), t()), binary()}} | {error, error()}.
 list_ext(<<Len:32/integer-unsigned-big, Rest0/binary>>) ->
     case list_elements(Len, Rest0, []) of
         {ok, {Elements, Rest1}} ->
@@ -191,6 +216,8 @@ list_ext(<<Len:32/integer-unsigned-big, Rest0/binary>>) ->
 list_ext(<<Bin/binary>>) ->
     {error, {malformed_list_ext, Bin}}.
 
+-spec list_elements(non_neg_integer(), binary(), [t()]) ->
+    {ok, {[t()], binary()}} | {error, error()}.
 list_elements(0, <<Rest/binary>>, Xs) ->
     {ok, {lists:reverse(Xs), Rest}};
 list_elements(N, <<Rest0/binary>>, Xs) ->
@@ -207,27 +234,33 @@ list_improper([X]) -> X;
 list_improper([X | Xs]) -> [X | list_improper(Xs)].
 
 %% SMALL_TUPLE_EXT
-%% 1       1       N
-%% 104     Arity   Elements
+%% 1       N
+%% Arity   Elements
 %%
 %% Encodes a tuple. The Arity field is an unsigned byte that determines how
 %% many elements that follows in section Elements.
-small_tuple_ext(<<Arity:8, Rest/binary>>) ->
+-spec small_tuple_ext(binary()) ->
+    {ok, {tuple(), binary()}} | {error, error()}.
+small_tuple_ext(<<Arity:8/integer-unsigned, Rest/binary>>) ->
     tuple_ext(Arity, Rest);
 small_tuple_ext(<<Bin/binary>>) ->
     {error, {malformed_small_tuple_ext, Bin}}.
 
 %% LARGE_TUPLE_EXT
-%% 1       4       N
-%% 105     Arity   Elements
+%% 4       N
+%% Arity   Elements
 %%
 %% Same as SMALL_TUPLE_EXT except that Arity is an unsigned 4 byte integer in
 %% big-endian format.
+-spec large_tuple_ext(binary()) ->
+    {ok, {tuple(), binary()}} | {error, error()}.
 large_tuple_ext(<<Arity:32/integer-unsigned-big, Rest/binary>>) ->
     tuple_ext(Arity, Rest);
 large_tuple_ext(<<Bin/binary>>) ->
     {error, {malformed_large_tuple_ext, Bin}}.
 
+-spec tuple_ext(non_neg_integer(), binary()) ->
+    {ok, {tuple(), binary()}} | {error, error()}.
 tuple_ext(Arity, <<Rest0/binary>>) ->
     case list_elements(Arity, Rest0, []) of
         {ok, {Elements, Rest1}} ->
@@ -240,13 +273,15 @@ tuple_ext(Arity, <<Rest0/binary>>) ->
 
 %% ATOM_EXT (deprecated):
 %% ---------------------
-%% 1 	2 	    Len
-%% 100 	Len 	AtomName
+%% 2 	Len
+%% Len 	AtomName
 %%
 %% An atom is stored with a 2 byte unsigned length in big-endian order,
 %% followed by Len numbers of 8-bit Latin-1 characters that forms the AtomName.
 %% The maximum allowed value for Len is 255.
-atom_ext(<<Len:16, AtomName:Len/binary, Rest/binary>>) ->
+-spec atom_ext(binary()) ->
+    {ok, {atom(), binary()}} | {error, {malformed_atom_ext, binary()}}.
+atom_ext(<<Len:16/integer-unsigned-big, AtomName:Len/binary, Rest/binary>>) ->
     Term = binary_to_atom(AtomName),
     {ok, {Term, Rest}};
 atom_ext(<<Bin/binary>>) ->
@@ -254,9 +289,17 @@ atom_ext(<<Bin/binary>>) ->
 
 
 %% STRING_EXT
-%% 1       2       Len
-%% 107     Length  Characters
-string_ext(<<Len:16, Characters:Len/binary, Rest/binary>>) ->
+%% 2       Len
+%% Length  Characters
+%%
+%% String does not have a corresponding Erlang representation, but is an
+%% optimization for sending lists of bytes (integer in the range 0-255) more
+%% efficiently over the distribution. As field Length is an unsigned 2 byte
+%% integer (big-endian), implementations must ensure that lists longer than
+%% 65535 elements are encoded as LIST_EXT.
+-spec string_ext(binary()) ->
+    {ok, {string(), binary()}} | {error, {malformed_string_ext, binary()}}.
+string_ext(<<Len:16/integer-unsigned-big, Characters:Len/binary, Rest/binary>>) ->
     Term = binary_to_list(Characters),
     {ok, {Term, Rest}};
 string_ext(<<Bin/binary>>) ->
@@ -264,8 +307,8 @@ string_ext(<<Bin/binary>>) ->
 
 
 %% SMALL_BIG_EXT
-%% 1       1   1       n
-%% 110     n   Sign    d(0) ... d(n-1)
+%% 1   1       n
+%% n   Sign    d(0) ... d(n-1)
 %%
 %% Bignums are stored in unary form with a Sign byte, that is, 0 if the bignum
 %% is positive and 1 if it is negative. The digits are stored with the least
@@ -274,22 +317,28 @@ string_ext(<<Bin/binary>>) ->
 %%
 %% B = 256
 %% (d0*B^0 + d1*B^1 + d2*B^2 + ... d(N-1)*B^(n-1))
+-spec small_big_ext(binary()) ->
+    {ok, {integer(), binary()}} | {error, {malformed_small_big_int, binary()}}.
 small_big_ext(<<N:8, Sign:8, Data:N/binary, Rest/binary>>) ->
     big_ext(Sign, Data, <<Rest/binary>>);
 small_big_ext(<<Bin/binary>>) ->
     {error, {malformed_small_big_int, Bin}}.
 
 %% LARGE_BIG_EXT
-%% 1       4   1       n
-%% 111     n   Sign    d(0) ... d(n-1)
+%% 4   1       n
+%% n   Sign    d(0) ... d(n-1)
 %%
 %% Same as SMALL_BIG_EXT except that the length field is an unsigned 4 byte
 %% integer.
+-spec large_big_ext(binary()) ->
+    {ok, {integer(), binary()}} | {error, error()}.
 large_big_ext(<<N:32, Sign:8, Data:N/binary, Rest/binary>>) ->
     big_ext(Sign, Data, <<Rest/binary>>);
 large_big_ext(<<Bin/binary>>) ->
     {error, {malformed_large_big_int, Bin}}.
 
+-spec big_ext(0 | 1, binary(), binary()) ->
+    {ok, {integer(), binary()}} | {error, error()}.
 big_ext(Sign, <<Data/binary>>, <<Rest/binary>>) ->
     case big_int_sign_to_multiplier(Sign) of
         {ok, Multiplier} ->
@@ -304,10 +353,14 @@ big_ext(Sign, <<Data/binary>>, <<Rest/binary>>) ->
             Err
     end.
 
+-spec big_int_sign_to_multiplier(integer()) ->
+    {ok,  1 | -1} | {error, {malformed_big_int_sign, integer()}}.
 big_int_sign_to_multiplier(0) -> {ok,  1};
 big_int_sign_to_multiplier(1) -> {ok, -1};
 big_int_sign_to_multiplier(S) -> {error, {malformed_big_int_sign, S}}.
 
+-spec big_int_data(binary(), integer(), integer()) ->
+    {ok, integer()} | {error, {malformed_big_int_data, binary()}}.
 big_int_data(<<>>, _, Int) ->
     {ok, Int};
 big_int_data(<<B:8/integer, Rest/binary>>, Pos, Int) ->
