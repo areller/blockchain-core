@@ -36,19 +36,19 @@
 
 -define(VERSION, 131).
 
--define(TAG_TERM_COMPRESSED, 80).
+-define(TAG_TERM_COMPRESSED  , 80).
 -define(TAG_SMALL_INTEGER_EXT, 97).
--define(TAG_INTEGER_EXT, 98).
--define(TAG_ATOM_EXT, 100). % deprecated
--define(TAG_SMALL_TUPLE_EXT, 104).
--define(TAG_LARGE_TUPLE_EXT, 105).
--define(TAG_NIL_EXT, 106).
--define(TAG_STRING_EXT, 107).
--define(TAG_LIST_EXT, 108).
--define(TAG_BINARY_EXT, 109).
--define(TAG_SMALL_BIG_EXT, 110).
--define(TAG_LARGE_BIG_EXT, 111).
--define(TAG_MAP_EXT, 116).
+-define(TAG_INTEGER_EXT      , 98).
+-define(TAG_ATOM_EXT         , 100). % deprecated
+-define(TAG_SMALL_TUPLE_EXT  , 104).
+-define(TAG_LARGE_TUPLE_EXT  , 105).
+-define(TAG_NIL_EXT          , 106).
+-define(TAG_STRING_EXT       , 107).
+-define(TAG_LIST_EXT         , 108).
+-define(TAG_BINARY_EXT       , 109).
+-define(TAG_SMALL_BIG_EXT    , 110).
+-define(TAG_LARGE_BIG_EXT    , 111).
+-define(TAG_MAP_EXT          , 116).
 
 -spec from_bin(binary()) -> {ok, t()} | {error, error()}.
 from_bin(<<Bin/binary>>) ->
