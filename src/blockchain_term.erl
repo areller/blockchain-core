@@ -23,6 +23,7 @@
     | #{t() => t()}
     .
 
+%% TODO Ensure all errors are captured here
 -type error() ::
       {trailing_data_remains, binary()}
     | {malformed_envelope, binary()}
@@ -41,19 +42,63 @@
 
 -define(VERSION, 131).
 
--define(TAG_TERM_COMPRESSED  , 80).
--define(TAG_SMALL_INTEGER_EXT, 97).
--define(TAG_INTEGER_EXT      , 98).
--define(TAG_ATOM_EXT         , 100). % deprecated
--define(TAG_SMALL_TUPLE_EXT  , 104).
--define(TAG_LARGE_TUPLE_EXT  , 105).
--define(TAG_NIL_EXT          , 106).
--define(TAG_STRING_EXT       , 107).
--define(TAG_LIST_EXT         , 108).
--define(TAG_BINARY_EXT       , 109).
--define(TAG_SMALL_BIG_EXT    , 110).
--define(TAG_LARGE_BIG_EXT    , 111).
--define(TAG_MAP_EXT          , 116).
+-define(TAG_TERM_COMPRESSED    ,  80).
+
+%% integer()
+-define(TAG_SMALL_INTEGER_EXT  ,  97).
+-define(TAG_INTEGER_EXT        ,  98).
+-define(TAG_SMALL_BIG_EXT      , 110).
+-define(TAG_LARGE_BIG_EXT      , 111).
+
+%% float()
+-define(TAG_FLOAT_EXT          ,  99).
+-define(TAG_NEW_FLOAT_EXT      ,  70).
+
+%% atom()
+-define(TAG_ATOM_EXT           , 100). % deprecated
+-define(TAG_ATOM_CACHE_REF     ,  82).
+-define(TAG_ATOM_UTF8_EXT      , 118).
+-define(TAG_SMALL_ATOM_UTF8_EXT, 119).
+-define(TAG_SMALL_ATOM_EXT     , 115). % deprecated
+
+%% tuple()
+-define(TAG_SMALL_TUPLE_EXT    , 104).
+-define(TAG_LARGE_TUPLE_EXT    , 105).
+
+%% string()
+-define(TAG_STRING_EXT         , 107).
+
+%% list()
+-define(TAG_NIL_EXT            , 106).
+-define(TAG_LIST_EXT           , 108).
+
+%% binary()
+-define(TAG_BINARY_EXT         , 109).
+-define(TAG_BIT_BINARY_EXT     ,  77).
+
+%% map()
+-define(TAG_MAP_EXT            , 116).
+
+%% port()
+-define(TAG_PORT_EXT           , 102).
+-define(TAG_NEW_PORT_EXT       ,  89).
+-define(TAG_V4_PORT_EXT        , 120).
+
+%% pid()
+-define(TAG_PID_EXT            , 103).
+-define(TAG_NEW_PID_EXT        ,  88).
+
+%% reference()
+-define(TAG_REFERENCE_EXT      , 101). % deprecated
+-define(TAG_NEW_REFERENCE_EXT  , 114).
+-define(TAG_NEWER_REFERENCE_EXT,  90).
+
+%% fun()
+-define(TAG_FUN_EXT            , 117).
+-define(TAG_NEW_FUN_EXT        , 112).
+
+%% fun M:F/A
+-define(TAG_EXPORT_EXT         , 113).
 
 -spec from_bin(binary()) -> {ok, t()} | {error, error()}.
 from_bin(<<Bin/binary>>) ->
@@ -83,20 +128,38 @@ envelope(<<Bin/binary>>) ->
 %% 1       N
 %% Tag     Data
 -spec term(binary()) -> {ok, {t(), binary()}} | {error, error()}.
-term(<<?TAG_TERM_COMPRESSED  , Rest/binary>>) -> term_compressed(Rest);
-term(<<?TAG_SMALL_INTEGER_EXT, Rest/binary>>) -> small_integer_ext(Rest);
-term(<<?TAG_INTEGER_EXT      , Rest/binary>>) -> integer_ext(Rest);
-term(<<?TAG_ATOM_EXT         , Rest/binary>>) -> atom_ext(Rest);
-term(<<?TAG_SMALL_TUPLE_EXT  , Rest/binary>>) -> small_tuple_ext(Rest);
-term(<<?TAG_LARGE_TUPLE_EXT  , Rest/binary>>) -> large_tuple_ext(Rest);
-term(<<?TAG_NIL_EXT          , Rest/binary>>) -> {ok, {[], Rest}};
-term(<<?TAG_STRING_EXT       , Rest/binary>>) -> string_ext(Rest);
-term(<<?TAG_LIST_EXT         , Rest/binary>>) -> list_ext(Rest);
-term(<<?TAG_BINARY_EXT       , Rest/binary>>) -> binary_ext(Rest);
-term(<<?TAG_SMALL_BIG_EXT    , Rest/binary>>) -> small_big_ext(Rest);
-term(<<?TAG_LARGE_BIG_EXT    , Rest/binary>>) -> large_big_ext(Rest);
-term(<<?TAG_MAP_EXT          , Rest/binary>>) -> map_ext(Rest);
-term(<<Tag:8                 , _/binary>>   ) -> {error, {unsupported_tag, Tag}};
+term(<<?TAG_TERM_COMPRESSED     , R/binary>>) -> term_compressed(R);
+term(<<?TAG_SMALL_INTEGER_EXT   , R/binary>>) -> small_integer_ext(R);
+term(<<?TAG_INTEGER_EXT         , R/binary>>) -> integer_ext(R);
+term(<<?TAG_ATOM_EXT            , R/binary>>) -> atom_ext(R);
+term(<<?TAG_SMALL_TUPLE_EXT     , R/binary>>) -> small_tuple_ext(R);
+term(<<?TAG_LARGE_TUPLE_EXT     , R/binary>>) -> large_tuple_ext(R);
+term(<<?TAG_NIL_EXT             , R/binary>>) -> {ok, {[], R}};
+term(<<?TAG_STRING_EXT          , R/binary>>) -> string_ext(R);
+term(<<?TAG_LIST_EXT            , R/binary>>) -> list_ext(R);
+term(<<?TAG_BINARY_EXT          , R/binary>>) -> binary_ext(R);
+term(<<?TAG_SMALL_BIG_EXT       , R/binary>>) -> small_big_ext(R);
+term(<<?TAG_LARGE_BIG_EXT       , R/binary>>) -> large_big_ext(R);
+term(<<?TAG_MAP_EXT             , R/binary>>) -> map_ext(R);
+term(<<?TAG_FLOAT_EXT           , _/binary>>) -> {error, {unsupported_term, 'FLOAT_EXT'}};
+term(<<?TAG_NEW_FLOAT_EXT       , _/binary>>) -> {error, {unsupported_term, 'NEW_FLOAT_EXT'}};
+term(<<?TAG_ATOM_CACHE_REF      , _/binary>>) -> {error, {unsupported_term, 'ATOM_CACHE_REF'}};
+term(<<?TAG_ATOM_UTF8_EXT       , _/binary>>) -> {error, {unsupported_term, 'ATOM_UTF8_EXT'}};
+term(<<?TAG_SMALL_ATOM_UTF8_EXT , _/binary>>) -> {error, {unsupported_term, 'SMALL_ATOM_UTF8_EXT'}};
+term(<<?TAG_SMALL_ATOM_EXT      , _/binary>>) -> {error, {unsupported_term, 'SMALL_ATOM_EXT'}};
+term(<<?TAG_BIT_BINARY_EXT      , _/binary>>) -> {error, {unsupported_term, 'BIT_BINARY_EXT'}};
+term(<<?TAG_PORT_EXT            , _/binary>>) -> {error, {unsupported_term, 'PORT_EXT'}};
+term(<<?TAG_NEW_PORT_EXT        , _/binary>>) -> {error, {unsupported_term, 'NEW_PORT_EXT'}};
+term(<<?TAG_V4_PORT_EXT         , _/binary>>) -> {error, {unsupported_term, 'V4_PORT_EXT'}};
+term(<<?TAG_PID_EXT             , _/binary>>) -> {error, {unsupported_term, 'PID_EXT'}};
+term(<<?TAG_NEW_PID_EXT         , _/binary>>) -> {error, {unsupported_term, 'NEW_PID_EXT'}};
+term(<<?TAG_REFERENCE_EXT       , _/binary>>) -> {error, {unsupported_term, 'REFERENCE_EXT'}};
+term(<<?TAG_NEW_REFERENCE_EXT   , _/binary>>) -> {error, {unsupported_term, 'NEW_REFERENCE_EXT'}};
+term(<<?TAG_NEWER_REFERENCE_EXT , _/binary>>) -> {error, {unsupported_term, 'NEWER_REFERENCE_EXT'}};
+term(<<?TAG_FUN_EXT             , _/binary>>) -> {error, {unsupported_term, 'FUN_EXT'}};
+term(<<?TAG_NEW_FUN_EXT         , _/binary>>) -> {error, {unsupported_term, 'NEW_FUN_EXT'}};
+term(<<?TAG_EXPORT_EXT          , _/binary>>) -> {error, {unsupported_term, 'EXPORT_EXT'}};
+term(<<Tag:8                    , _/binary>>) -> {error, {unsupported_tag, Tag}};
 term(<<Bin/binary>>                         ) -> {error, {malformed_term, Bin}}.
 
 -spec binary_ext(binary()) ->
@@ -371,7 +434,7 @@ big_int_data(<<Bin/binary>>, _, _) ->
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
-term_test_() ->
+supported_term_test_() ->
     [
         {
             lists:flatten(io_lib:format("Opts:~p Term: ~p", [Opts, Term])),
@@ -417,6 +480,28 @@ term_test_() ->
             #{"k" => "v"},
             #{<<"k">> => <<"v">>},
             #{k1 => #{k2 => #{k3 => hi}}}
+        ],
+        Opts <- [[], [compressed] | [[{compressed, N}] || N <- lists:seq(0, 9)]]
+    ].
+
+unsupported_term_test_() ->
+    [
+        {
+            lists:flatten(io_lib:format("Opts:~p Term: ~p", [Opts, Term])),
+            ?_assertMatch({error, {unsupported_term, _}}, from_bin(term_to_binary(Term)))
+        }
+    ||
+        Term <- [
+            'λαμβδα',
+            'ламбда',
+            make_ref(),
+            fun() -> foo end,
+            1.1,
+            hd(erlang:ports()), % TODO misc port versions?
+            self(),
+            fun ?MODULE:term/1
+            %% TODO ATOM_CACHE_REF
+            %% TODO BIT_BINARY_EXT
         ],
         Opts <- [[], [compressed] | [[{compressed, N}] || N <- lists:seq(0, 9)]]
     ].
