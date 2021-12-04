@@ -418,7 +418,7 @@ term_test_() ->
             #{<<"k">> => <<"v">>},
             #{k1 => #{k2 => #{k3 => hi}}}
         ],
-        Opts <- [[], [compressed]]
+        Opts <- [[], [compressed] | [[{compressed, N}] || N <- lists:seq(0, 9)]]
     ].
 
 -endif.
