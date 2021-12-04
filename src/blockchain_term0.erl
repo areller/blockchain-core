@@ -151,6 +151,10 @@ binary_to_proplist_test_() ->
     [
         [
             {
+                lists:flatten(io_lib:format("LEDEGR. Term: ~p", [Term])),
+                ?_assertEqual(Term, blockchain_ledger_snapshot_v1:binary_to_proplist(term_to_binary(Term)))
+            },
+            {
                 lists:flatten(io_lib:format("OLD. Term: ~p", [Term])),
                 ?_assertEqual({ok, Term}, from_bin(term_to_binary(Term)))
             },
@@ -214,6 +218,39 @@ binary_to_proplist_test_() ->
             % strings unsupported
             "",
             [{foo, #{"bar" => "baz"}}]
+        ]
+    ].
+
+binary_to_list_of_binaries_test_() ->
+    [
+        [
+            {
+                lists:flatten(io_lib:format("OLD. Term: ~p", [Term])),
+                ?_assertEqual(
+                    Term,
+                    blockchain_ledger_snapshot_v1:binary_to_list_of_binaries(
+                        term_to_binary(Term)
+                    )
+                )
+            },
+            {
+                lists:flatten(io_lib:format("NEW. Term: ~p", [Term])),
+                ?_assertEqual({ok, Term}, blockchain_term:from_bin(term_to_binary(Term)))
+            }
+        ]
+    ||
+        Term <- [
+            [<<>>],
+
+            [<<"jhbjhbjcbkqjwhbkcjhqbkwhrbckqjhwbkjhcbqkjwhbckjqhwbekjhbkjhc">>],
+
+            [<<"jhbjhbj">>,
+             <<"bkqjwhbkcjhqbkwhrb">>,
+             <<"kqjhw">>,
+             <<"kjhcbq">>,
+             <<"jwhbckj">>,
+             <<"hwbekj">>,
+             <<"bkjhc">>]
         ]
     ].
 

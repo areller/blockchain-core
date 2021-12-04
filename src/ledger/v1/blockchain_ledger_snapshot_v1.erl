@@ -25,7 +25,10 @@
          height/1,
          hash/1,
 
-         diff/2
+         diff/2,
+
+         binary_to_proplist/1,
+         binary_to_list_of_binaries/1
         ]).
 
 -ifdef(TEST).
@@ -622,7 +625,8 @@ load_blocks(Ledger0, Chain, Snapshot) ->
                 lager:info("blocks binary is ~p", [byte_size(Bs)]),
                 print_memory(),
                 %% use a custom decoder here to preserve sub binary references
-                binary_to_list_of_binaries(Bs);
+                {ok, Blocks0} = blockchain_term:from_bin(Bs),
+                Blocks0;
             error ->
                 []
         end,
@@ -1404,11 +1408,12 @@ deserialize_field(hexes, Bin) ->
     %% We do the deseraialize in a try/catch in case
     %% there are bugs or the structure of hexes changes in the
     %% future.
-    try binary_to_proplist(Bin)
-    catch
-        What:Why ->
-            lager:warning("deserializing hexes from snapshot failed ~p ~p, falling back to binary_to_term", [What, Why]),
-            binary_to_term(Bin)
+    try
+        {ok, Term} = blockchain_term:from_bin(Bin),
+        Term
+    catch What:Why ->
+        lager:warning("deserializing hexes from snapshot failed ~p ~p, falling back to binary_to_term", [What, Why]),
+        binary_to_term(Bin)
     end;
 deserialize_field(K, <<Bin/binary>>) ->
     case is_raw_field(K) of
