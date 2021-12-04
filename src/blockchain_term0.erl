@@ -1,4 +1,4 @@
--module(blockchain_etf_decode).
+-module(blockchain_term0).
 
 -export([
     from_bin/1
