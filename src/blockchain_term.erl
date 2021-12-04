@@ -329,8 +329,8 @@ big_int_data(<<Bin/binary>>, _, _) ->
 term_test_() ->
     [
         {
-            lists:flatten(io_lib:format("Opts:~p, Term:~p", [Opts, Term])),
-            ?_assertEqual({ok, Term}, from_bin(term_to_binary(Term, Opts)))
+            lists:flatten(io_lib:format("Opts:~p Term: ~p", [Opts, Term])),
+            ?_assertEqual({ok, Term}, from_bin(term_to_binary(Term)))
         }
     ||
         Term <- [
@@ -370,7 +370,8 @@ term_test_() ->
             #{0 => 1},
             #{k => v},
             #{"k" => "v"},
-            #{<<"k">> => <<"v">>}
+            #{<<"k">> => <<"v">>},
+            #{k1 => #{k2 => #{k3 => hi}}}
         ],
         Opts <- [[], [compressed]]
     ].

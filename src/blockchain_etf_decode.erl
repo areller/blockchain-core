@@ -147,10 +147,16 @@ nest(F, X, N) -> nest(F, F(X), N - 1).
 
 binary_to_proplist_test_() ->
     [
-        {
-            lists:flatten(io_lib:format("Term: ~p", [Term])),
-            ?_assertEqual({ok, Term}, from_bin(term_to_binary(Term)))
-        }
+        [
+            {
+                lists:flatten(io_lib:format("OLD. Term: ~p", [Term])),
+                ?_assertEqual({ok, Term}, from_bin(term_to_binary(Term)))
+            },
+            {
+                lists:flatten(io_lib:format("NEW. Term: ~p", [Term])),
+                ?_assertEqual({ok, Term}, blockchain_term:from_bin(term_to_binary(Term)))
+            }
+        ]
     ||
         Term <- [
             [{1, [<<>>]}],
@@ -169,22 +175,42 @@ binary_to_proplist_test_() ->
             [{list, #{1 => 2}}],
             [{foo, #{1 => 2}}],
             [{foo, #{bar => baz}}],
-            [{foo, #{<<"bar">> => <<"baz">>}}]
+            [{foo, #{<<"bar">> => <<"baz">>}}],
+            [{k, [{k, [{k, [{k, v}]}]}]}],
+            [{k, [{k, [{k, [{k, #{k => v}}]}]}]}],
+            [{k, [{k, [{k, [{k, #{k => #{}}}]}]}]}],
+            [{k, #{k1 => #{k2 => #{k3 => hi}}}}],
+            [{1, 2, 3, 4, 5}]
         ]
     ]
     ++
     [
-        {
-            %% Title is especially important with _assertMatch, because
-            %% it doesn't report values:
-            lists:flatten(io_lib:format("Term: ~p", [Term])),
-            ?_assertMatch({error, _}, from_bin(term_to_binary(Term)))
-        }
+        %% Title is especially important with _assertMatch, because
+        %% it doesn't report values:
+        [
+            {
+                lists:flatten(io_lib:format("OLD. Term: ~p", [Term])),
+                ?_assertMatch({error, _}, from_bin(term_to_binary(Term)))
+            },
+            {
+                lists:flatten(io_lib:format("NEW. Term: ~p", [Term])),
+                ?_assertEqual({ok, Term}, blockchain_term:from_bin(term_to_binary(Term)))
+            }
+        ]
     ||
         Term <- [
+            1,
+            {1, 2, 3, 4, 5},
+            list_to_tuple(lists:seq(1, 1000)),
+            [list_to_tuple(lists:seq(1, 1000))],
+            #{k1 => #{k2 => #{k3 => hi}}},
+            #{k => v},
+            #{},
             [],
+
+            % strings unsupported
             "",
-            [{foo, #{"bar" => "baz"}}] % strings unsupported
+            [{foo, #{"bar" => "baz"}}]
         ]
     ].
 
