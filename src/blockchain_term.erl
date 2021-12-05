@@ -23,6 +23,9 @@
     | #{t() => t()}
     .
 
+-type atom_ext_error() ::
+    {malformed_atom_ext, binary() | {length_exceeds_max, pos_integer()}}.
+
 %% XXX Ensure all errors explicitly returned from this module are captured here:
 -type error() ::
       {trailing_data_remains, binary()}
@@ -36,10 +39,10 @@
     | {malformed_map_ext, binary()}
     | {malformed_small_integer_ext, binary()}
     | {malformed_integer_ext, binary()}
-    | {malformed_list_ext, empty_with_non_nil_tail | binary()}
+    | {malformed_list_ext, binary() | empty_with_non_nil_tail}
     | {malformed_small_tuple_ext, binary()}
     | {malformed_large_tuple_ext, binary()}
-    | {malformed_atom_ext, binary()}
+    | atom_ext_error()
     | {malformed_string_ext, binary()}
     | {malformed_small_big_int, binary()}
     | {malformed_large_big_int, binary()}
@@ -107,6 +110,8 @@
 %% fun M:F/A
 -define(TAG_EXPORT_EXT         , 113).
 
+-define(MAX_LEN_ATOM_EXT, 255).
+
 -spec from_bin(binary()) -> {ok, t()} | {error, error()}.
 from_bin(<<Bin/binary>>) ->
     case envelope(Bin) of
@@ -126,7 +131,7 @@ from_bin(<<Bin/binary>>) ->
 -spec envelope(binary()) -> {ok, {t(), binary()}} | {error, error()}.
 envelope(<<?VERSION, Data/binary>>) ->
     term(Data);
-envelope(<<Version:8, _/binary>>) ->
+envelope(<<Version:8/integer, _/binary>>) ->
     {error, {unsupported_version, Version}};
 envelope(<<Bin/binary>>) ->
     {error, {malformed_envelope, Bin}}.
@@ -167,12 +172,20 @@ term(<<?TAG_NEWER_REFERENCE_EXT , _/binary>>) -> {error, {unsupported_term, 'NEW
 term(<<?TAG_FUN_EXT             , _/binary>>) -> {error, {unsupported_term, 'FUN_EXT'            }};  % TODO
 term(<<?TAG_NEW_FUN_EXT         , _/binary>>) -> {error, {unsupported_term, 'NEW_FUN_EXT'        }};  % TODO
 term(<<?TAG_EXPORT_EXT          , _/binary>>) -> {error, {unsupported_term, 'EXPORT_EXT'         }};  % TODO
-term(<<Tag:8                    , _/binary>>) -> {error, {unsupported_tag, Tag}};
+term(<<Tag:8/integer            , _/binary>>) -> {error, {unsupported_tag, Tag}};
 term(<<Bin/binary>>                         ) -> {error, {malformed_term, Bin}}.
 
+
+%% BINARY_EXT
+%% 4       Len
+%% Len     Data
+%%
+%% Binaries are generated with bit syntax expression or with
+%% erlang:list_to_binary/1, erlang:term_to_binary/1, or as input from binary
+%% ports. The Len length field is an unsigned 4 byte integer (big-endian).
 -spec binary_ext(binary()) ->
     {ok, {binary(), binary()}} | {error, {malformed_binary_ext, binary()}}.
-binary_ext(<<Len:32, Bin:Len/binary, Rest/binary>>) ->
+binary_ext(<<Len:32/integer-unsigned-big, Bin:Len/binary, Rest/binary>>) ->
     {ok, {Bin, Rest}};
 binary_ext(<<Bin/binary>>) ->
     {error, {malformed_binary_ext, Bin}}.
@@ -352,9 +365,12 @@ tuple_ext(Arity, <<Rest0/binary>>) ->
 %% The maximum allowed value for Len is 255.
 -spec atom_ext(binary()) ->
     {ok, {atom(), binary()}} | {error, {malformed_atom_ext, binary()}}.
-atom_ext(<<Len:16/integer-unsigned-big, AtomName:Len/binary, Rest/binary>>) ->
+atom_ext(<<Len:16/integer-unsigned-big, AtomName:Len/binary, Rest/binary>>)
+when Len =< ?MAX_LEN_ATOM_EXT ->
     Term = binary_to_atom(AtomName),
     {ok, {Term, Rest}};
+atom_ext(<<Len:16/integer-unsigned-big, _:Len/binary, _/binary>>) ->
+    {error, {malformed_atom_ext, {length_exceeds_max, Len}}};
 atom_ext(<<Bin/binary>>) ->
     {error, {malformed_atom_ext, Bin}}.
 
@@ -390,7 +406,7 @@ string_ext(<<Bin/binary>>) ->
 %% (d0*B^0 + d1*B^1 + d2*B^2 + ... d(N-1)*B^(n-1))
 -spec small_big_ext(binary()) ->
     {ok, {integer(), binary()}} | {error, {malformed_small_big_int, binary()}}.
-small_big_ext(<<N:8, Sign:8, Data:N/binary, Rest/binary>>) ->
+small_big_ext(<<N:8/integer-unsigned, Sign:8/integer-unsigned, Data:N/binary, Rest/binary>>) ->
     big_ext(Sign, Data, <<Rest/binary>>);
 small_big_ext(<<Bin/binary>>) ->
     {error, {malformed_small_big_int, Bin}}.
@@ -403,7 +419,7 @@ small_big_ext(<<Bin/binary>>) ->
 %% integer.
 -spec large_big_ext(binary()) ->
     {ok, {integer(), binary()}} | {error, error()}.
-large_big_ext(<<N:32, Sign:8, Data:N/binary, Rest/binary>>) ->
+large_big_ext(<<N:32/integer-unsigned, Sign:8/integer-unsigned, Data:N/binary, Rest/binary>>) ->
     big_ext(Sign, Data, <<Rest/binary>>);
 large_big_ext(<<Bin/binary>>) ->
     {error, {malformed_large_big_int, Bin}}.
