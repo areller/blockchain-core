@@ -115,6 +115,7 @@ from_bin(<<Bin/binary>>) ->
 
 %% 1       N
 %% 131     Data
+%% TODO Distribution Header
 -spec envelope(binary()) -> {ok, {t(), binary()}} | {error, error()}.
 envelope(<<?VERSION, Data/binary>>) ->
     term(Data);
@@ -141,24 +142,24 @@ term(<<?TAG_BINARY_EXT          , R/binary>>) -> binary_ext(R);
 term(<<?TAG_SMALL_BIG_EXT       , R/binary>>) -> small_big_ext(R);
 term(<<?TAG_LARGE_BIG_EXT       , R/binary>>) -> large_big_ext(R);
 term(<<?TAG_MAP_EXT             , R/binary>>) -> map_ext(R);
-term(<<?TAG_FLOAT_EXT           , _/binary>>) -> {error, {unsupported_term, 'FLOAT_EXT'}};
-term(<<?TAG_NEW_FLOAT_EXT       , _/binary>>) -> {error, {unsupported_term, 'NEW_FLOAT_EXT'}};
-term(<<?TAG_ATOM_CACHE_REF      , _/binary>>) -> {error, {unsupported_term, 'ATOM_CACHE_REF'}};
-term(<<?TAG_ATOM_UTF8_EXT       , _/binary>>) -> {error, {unsupported_term, 'ATOM_UTF8_EXT'}};
-term(<<?TAG_SMALL_ATOM_UTF8_EXT , _/binary>>) -> {error, {unsupported_term, 'SMALL_ATOM_UTF8_EXT'}};
-term(<<?TAG_SMALL_ATOM_EXT      , _/binary>>) -> {error, {unsupported_term, 'SMALL_ATOM_EXT'}};
-term(<<?TAG_BIT_BINARY_EXT      , _/binary>>) -> {error, {unsupported_term, 'BIT_BINARY_EXT'}};
-term(<<?TAG_PORT_EXT            , _/binary>>) -> {error, {unsupported_term, 'PORT_EXT'}};
-term(<<?TAG_NEW_PORT_EXT        , _/binary>>) -> {error, {unsupported_term, 'NEW_PORT_EXT'}};
-term(<<?TAG_V4_PORT_EXT         , _/binary>>) -> {error, {unsupported_term, 'V4_PORT_EXT'}};
-term(<<?TAG_PID_EXT             , _/binary>>) -> {error, {unsupported_term, 'PID_EXT'}};
-term(<<?TAG_NEW_PID_EXT         , _/binary>>) -> {error, {unsupported_term, 'NEW_PID_EXT'}};
-term(<<?TAG_REFERENCE_EXT       , _/binary>>) -> {error, {unsupported_term, 'REFERENCE_EXT'}};
-term(<<?TAG_NEW_REFERENCE_EXT   , _/binary>>) -> {error, {unsupported_term, 'NEW_REFERENCE_EXT'}};
-term(<<?TAG_NEWER_REFERENCE_EXT , _/binary>>) -> {error, {unsupported_term, 'NEWER_REFERENCE_EXT'}};
-term(<<?TAG_FUN_EXT             , _/binary>>) -> {error, {unsupported_term, 'FUN_EXT'}};
-term(<<?TAG_NEW_FUN_EXT         , _/binary>>) -> {error, {unsupported_term, 'NEW_FUN_EXT'}};
-term(<<?TAG_EXPORT_EXT          , _/binary>>) -> {error, {unsupported_term, 'EXPORT_EXT'}};
+term(<<?TAG_FLOAT_EXT           , _/binary>>) -> {error, {unsupported_term, 'FLOAT_EXT'          }};  % TODO
+term(<<?TAG_NEW_FLOAT_EXT       , _/binary>>) -> {error, {unsupported_term, 'NEW_FLOAT_EXT'      }};  % TODO
+term(<<?TAG_ATOM_CACHE_REF      , _/binary>>) -> {error, {unsupported_term, 'ATOM_CACHE_REF'     }};  % TODO
+term(<<?TAG_ATOM_UTF8_EXT       , _/binary>>) -> {error, {unsupported_term, 'ATOM_UTF8_EXT'      }};  % TODO
+term(<<?TAG_SMALL_ATOM_UTF8_EXT , _/binary>>) -> {error, {unsupported_term, 'SMALL_ATOM_UTF8_EXT'}};  % TODO
+term(<<?TAG_SMALL_ATOM_EXT      , _/binary>>) -> {error, {unsupported_term, 'SMALL_ATOM_EXT'     }};  % TODO
+term(<<?TAG_BIT_BINARY_EXT      , _/binary>>) -> {error, {unsupported_term, 'BIT_BINARY_EXT'     }};  % TODO
+term(<<?TAG_PORT_EXT            , _/binary>>) -> {error, {unsupported_term, 'PORT_EXT'           }};  % TODO
+term(<<?TAG_NEW_PORT_EXT        , _/binary>>) -> {error, {unsupported_term, 'NEW_PORT_EXT'       }};  % TODO
+term(<<?TAG_V4_PORT_EXT         , _/binary>>) -> {error, {unsupported_term, 'V4_PORT_EXT'        }};  % TODO
+term(<<?TAG_PID_EXT             , _/binary>>) -> {error, {unsupported_term, 'PID_EXT'            }};  % TODO
+term(<<?TAG_NEW_PID_EXT         , _/binary>>) -> {error, {unsupported_term, 'NEW_PID_EXT'        }};  % TODO
+term(<<?TAG_REFERENCE_EXT       , _/binary>>) -> {error, {unsupported_term, 'REFERENCE_EXT'      }};  % TODO
+term(<<?TAG_NEW_REFERENCE_EXT   , _/binary>>) -> {error, {unsupported_term, 'NEW_REFERENCE_EXT'  }};  % TODO
+term(<<?TAG_NEWER_REFERENCE_EXT , _/binary>>) -> {error, {unsupported_term, 'NEWER_REFERENCE_EXT'}};  % TODO
+term(<<?TAG_FUN_EXT             , _/binary>>) -> {error, {unsupported_term, 'FUN_EXT'            }};  % TODO
+term(<<?TAG_NEW_FUN_EXT         , _/binary>>) -> {error, {unsupported_term, 'NEW_FUN_EXT'        }};  % TODO
+term(<<?TAG_EXPORT_EXT          , _/binary>>) -> {error, {unsupported_term, 'EXPORT_EXT'         }};  % TODO
 term(<<Tag:8                    , _/binary>>) -> {error, {unsupported_tag, Tag}};
 term(<<Bin/binary>>                         ) -> {error, {malformed_term, Bin}}.
 
@@ -433,6 +434,9 @@ big_int_data(<<Bin/binary>>, _, _) ->
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
+
+%% TODO Individual term test cases that check both ok and error results.
+%% TODO quickcheck/proper
 
 supported_term_test_() ->
     [
