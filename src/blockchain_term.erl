@@ -23,21 +23,28 @@
     | #{t() => t()}
     .
 
-%% TODO Ensure all errors are captured here
+%% XXX Ensure all errors explicitly returned from this module are captured here:
 -type error() ::
       {trailing_data_remains, binary()}
     | {malformed_envelope, binary()}
     | {unsupported_version, integer()}
     | {malformed_term, binary()}
+    | {unsupported_term, atom()}
     | {unsupported_tag, integer()}
-    | {uncompressed_data_bad_size, {expected, integer(), actual, integer()}}
-    | {malformed_list, empty_with_non_nil_tail}
-    | {malformed_list_ext, binary()}
+    | {uncompressed_data_bad_size, {expected, non_neg_integer(), actual, non_neg_integer()}}
+    | {malformed_binary_ext, binary()}
+    | {malformed_map_ext, binary()}
+    | {malformed_small_integer_ext, binary()}
+    | {malformed_integer_ext, binary()}
+    | {malformed_list_ext, empty_with_non_nil_tail | binary()}
+    | {malformed_small_tuple_ext, binary()}
+    | {malformed_large_tuple_ext, binary()}
     | {malformed_atom_ext, binary()}
     | {malformed_string_ext, binary()}
     | {malformed_small_big_int, binary()}
     | {malformed_large_big_int, binary()}
     | {malformed_big_int_sign, integer()}
+    | {malformed_big_int_data, integer()}
     .
 
 -define(VERSION, 131).
@@ -189,7 +196,7 @@ map_ext(<<Arity:32/integer-unsigned-big, Rest0/binary>>) ->
             Err
     end;
 map_ext(<<Bin/binary>>) ->
-    {error, {malformed_map, Bin}}.
+    {error, {malformed_map_ext, Bin}}.
 
 -spec map_pairs(non_neg_integer(), [{t(), t()}], binary()) ->
     {ok, {[{t(), t()}], binary()}} | {error, error()}.
@@ -268,7 +275,7 @@ list_ext(<<Len:32/integer-unsigned-big, Rest0/binary>>) ->
                     case {Elements, Tail} of
                         {[], []} -> {ok, {[], R}};
                         {_ , []} -> {ok, {Elements, R}};
-                        {[], _ } -> {error, {malformed_list, empty_with_non_nil_tail}};
+                        {[], _ } -> {error, {malformed_list_ext, empty_with_non_nil_tail}};
                         {_ , _ } -> {ok, {list_improper(Elements ++ [Tail]), R}}
                     end;
                 {error, _}=Err ->
