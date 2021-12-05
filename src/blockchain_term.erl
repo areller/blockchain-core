@@ -37,6 +37,7 @@
     | {uncompressed_data_bad_size, {expected, non_neg_integer(), actual, non_neg_integer()}}
     | {malformed_binary_ext, binary()}
     | {malformed_map_ext, binary()}
+    | {malformed_new_float_ext, binary()}
     | {malformed_small_integer_ext, binary()}
     | {malformed_integer_ext, binary()}
     | {malformed_list_ext, binary() | empty_with_non_nil_tail}
@@ -154,8 +155,8 @@ term(<<?TAG_BINARY_EXT          , R/binary>>) -> binary_ext(R);
 term(<<?TAG_SMALL_BIG_EXT       , R/binary>>) -> small_big_ext(R);
 term(<<?TAG_LARGE_BIG_EXT       , R/binary>>) -> large_big_ext(R);
 term(<<?TAG_MAP_EXT             , R/binary>>) -> map_ext(R);
+term(<<?TAG_NEW_FLOAT_EXT       , R/binary>>) -> new_float_ext(R);
 term(<<?TAG_FLOAT_EXT           , _/binary>>) -> {error, {unsupported_term, 'FLOAT_EXT'          }};  % TODO
-term(<<?TAG_NEW_FLOAT_EXT       , _/binary>>) -> {error, {unsupported_term, 'NEW_FLOAT_EXT'      }};  % TODO
 term(<<?TAG_ATOM_CACHE_REF      , _/binary>>) -> {error, {unsupported_term, 'ATOM_CACHE_REF'     }};  % TODO
 term(<<?TAG_ATOM_UTF8_EXT       , _/binary>>) -> {error, {unsupported_term, 'ATOM_UTF8_EXT'      }};  % TODO
 term(<<?TAG_SMALL_ATOM_UTF8_EXT , _/binary>>) -> {error, {unsupported_term, 'SMALL_ATOM_UTF8_EXT'}};  % TODO
@@ -227,6 +228,13 @@ map_pairs(N, Pairs, <<Rest0/binary>>) ->
         {error, _}=Err ->
             Err
     end.
+
+-spec new_float_ext(binary()) ->
+    {ok, float()} | {error, {malformed_new_float_ext, binary()}}.
+new_float_ext(<<N:64/float-big, Rest/binary>>) ->
+    {ok, {N, Rest}};
+new_float_ext(<<B/binary>>) ->
+    {error, {malformed_new_float_ext, B}}.
 
 %% SMALL_INTEGER_EXT
 %% 1
@@ -476,6 +484,7 @@ supported_term_test_() ->
             aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
             [],
             "",
+            1.1,
             0,
             "a",
             "abcdefghijklmnopqrstuvwxyz",
@@ -523,7 +532,6 @@ unsupported_term_test_() ->
             'ламбда',
             make_ref(),
             fun() -> foo end,
-            1.1,
             hd(erlang:ports()), % TODO misc port versions?
             self(),
             fun ?MODULE:term/1
