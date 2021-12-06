@@ -166,6 +166,22 @@
 from_bin(<<Bin/binary>>) ->
     envelope(Bin).
 
+%% TODO -spec from_bin_with_contract(binary(), blockchain_contract:t()) ->
+%%     {ok, t()} | {error, error() | blockchain_contract:error()}.
+%% from_bin_with_contract(<<Bin/binary>>, Contract) ->
+%%     case envelope(Bin) of
+%%         {ok, Term}=Ok ->
+%%             case blockchain_contract:check(Term, Contract) of
+%%                 ok ->
+%%                     Ok;
+%%                 {error, _}=Err ->
+%%                     Err
+%%             end;
+%%         {error, _}=Err ->
+%%             Err
+%%     end.
+
+
 %% 1       N
 %% 131     Data
 %% TODO Distribution Header?
