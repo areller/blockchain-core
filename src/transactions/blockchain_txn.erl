@@ -538,7 +538,7 @@ absorb_block(Block, Rescue, Chain) ->
     Transactions0 = blockchain_block:transactions(Block),
     Transactions = lists:sort(fun sort/2, (Transactions0)),
     Height = blockchain_block:height(Block),
-    Hash = blockchain_block:hash(Block),
+    Hash = blockchain_block:hash_block(Block),
     case absorb_txns(Transactions, Rescue, Chain) of
         ok ->
             ok = blockchain_ledger_v1:increment_height(Block, Ledger),
