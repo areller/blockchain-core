@@ -211,6 +211,8 @@ frame(<<?TAG_COMPRESSED          , R/binary>>) -> compressed(R);
 frame(<<?TAG_SMALL_INTEGER_EXT   , R/binary>>) -> small_integer_ext(R);
 frame(<<?TAG_INTEGER_EXT         , R/binary>>) -> integer_ext(R);
 frame(<<?TAG_ATOM_EXT            , R/binary>>) -> atom_ext(R);
+frame(<<?TAG_ATOM_UTF8_EXT       , R/binary>>) -> atom_utf8_ext(R);
+frame(<<?TAG_SMALL_ATOM_UTF8_EXT , R/binary>>) -> small_atom_utf8_ext(R);
 frame(<<?TAG_SMALL_TUPLE_EXT     , R/binary>>) -> small_tuple_ext(R);
 frame(<<?TAG_LARGE_TUPLE_EXT     , R/binary>>) -> large_tuple_ext(R);
 frame(<<?TAG_NIL_EXT             , R/binary>>) -> {ok, {[], R}};
@@ -223,8 +225,6 @@ frame(<<?TAG_MAP_EXT             , R/binary>>) -> map_ext(R);
 frame(<<?TAG_NEW_FLOAT_EXT       , R/binary>>) -> new_float_ext(R);
 frame(<<?TAG_FLOAT_EXT           , _/binary>>) -> {error, {frame, 'FLOAT_EXT'          , unsupported}};  % TODO
 frame(<<?TAG_ATOM_CACHE_REF      , _/binary>>) -> {error, {frame, 'ATOM_CACHE_REF'     , unsupported}};  % TODO
-frame(<<?TAG_ATOM_UTF8_EXT       , _/binary>>) -> {error, {frame, 'ATOM_UTF8_EXT'      , unsupported}};  % TODO
-frame(<<?TAG_SMALL_ATOM_UTF8_EXT , _/binary>>) -> {error, {frame, 'SMALL_ATOM_UTF8_EXT', unsupported}};  % TODO
 frame(<<?TAG_SMALL_ATOM_EXT      , _/binary>>) -> {error, {frame, 'SMALL_ATOM_EXT'     , unsupported}};  % TODO
 frame(<<?TAG_BIT_BINARY_EXT      , _/binary>>) -> {error, {frame, 'BIT_BINARY_EXT'     , unsupported}};  % TODO
 frame(<<?TAG_PORT_EXT            , _/binary>>) -> {error, {frame, 'PORT_EXT'           , unsupported}};  % TODO
@@ -426,6 +426,53 @@ tuple_ext(Arity, <<Rest0/binary>>) ->
             Err
     end.
 
+%% BEGIN atoms ================================================================
+
+%% Encoding atoms
+%% --------------
+%%
+%% > As from ERTS 9.0 (OTP 20), atoms may contain any Unicode characters.
+%% >
+%% > Atoms sent over node distribution are always encoded in UTF-8 using
+%% > either ATOM_UTF8_EXT, SMALL_ATOM_UTF8_EXT or ATOM_CACHE_REF.
+%% >
+%% > Atoms encoded with erlang:term_to_binary/1,2 or
+%% > erlang:term_to_iovec/1,2 are by default still using the old
+%% > deprecated Latin-1 format ATOM_EXT for atoms that only contain
+%% > Latin-1 characters (Unicode code points 0-255). Atoms with higher
+%% > code points will be encoded in UTF-8 using either ATOM_UTF8_EXT or
+%% > SMALL_ATOM_UTF8_EXT.
+%% >
+%% > The maximum number of allowed characters in an atom is 255. In the
+%% > UTF-8 case, each character can need 4 bytes to be encoded.
+
+%% SMALL_ATOM_UTF8_EXT
+%% 1       Len
+%% Len     AtomName
+%%
+%% An atom is stored with a 1 byte unsigned length, followed by Len
+%% bytes containing the AtomName encoded in UTF-8. Longer atoms encoded
+%% in UTF-8 can be represented using ATOM_UTF8_EXT.
+
+-spec small_atom_utf8_ext(binary()) -> result_internal(atom()).
+small_atom_utf8_ext(<<Len:8/integer-unsigned, AtomName:Len/binary, Rest/binary>>) ->
+    {ok, {binary_to_atom(AtomName), Rest}};
+small_atom_utf8_ext(<<Bin/binary>>) ->
+    {error, {frame, 'SMALL_ATOM_UTF8_EXT', {unmatched, Bin}}}.
+
+
+%% ATOM_UTF8_EXT
+%% 2       Len
+%% Len     AtomName
+%%
+%% An atom is stored with a 2 byte unsigned length in big-endian order,
+%% followed by Len bytes containing the AtomName encoded in UTF-8.
+-spec atom_utf8_ext(binary()) -> result_internal(atom()).
+atom_utf8_ext(<<Len:16/integer-unsigned, AtomName:Len/binary, Rest/binary>>) ->
+    {ok, {binary_to_atom(AtomName), Rest}};
+atom_utf8_ext(<<Bin/binary>>) ->
+    {error, {frame, 'ATOM_UTF8_EXT', {unmatched, Bin}}}.
+
 %% ATOM_EXT (deprecated):
 %% ---------------------
 %% 2 	Len
@@ -444,6 +491,8 @@ atom_ext(<<Len:16/integer-unsigned-big, AtomName:Len/binary, Rest/binary>>) ->
     end;
 atom_ext(<<Bin/binary>>) ->
     {error, {frame, 'ATOM_EXT', {unmatched, Bin}}}.
+
+%% END atoms ==================================================================
 
 
 %% STRING_EXT
@@ -534,11 +583,40 @@ supported_term_test_() ->
         }
     ||
         Term <- [
+            %% ATOM_EXT
             a,
             b,
             ab,
             abcdefghijklmnopqrstuvwxyz,
             aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+
+            %% SMALL_ATOM_UTF8_EXT
+            'λ',
+            'λαμβδα',
+            'ламбда',
+
+            %% ATOM_UTF8_EXT
+            list_to_atom(lists:duplicate(255, $λ)),
+            list_to_atom(
+                %% XXX Without the following redundant list dance - erlc crashes,
+                %%     for mysterious reasons, with an
+                %%     "internal error in beam_asm".
+                lists:flatten(
+                    [
+                        "У лукоморья дуб зелёный;"
+                        "Златая цепь на дубе том:"
+                        "И днём и ночью кот учёный"
+                        "Всё ходит по цепи кругом;"
+                        "Идёт направо - песнь заводит,"
+                        "Налево - сказку говорит."
+                        "Там чудеса: там леший бродит"
+                        "Русалка на ветвях сидит;"
+                        "Там на неведомых дорожках"
+                        "Следы невиданных зверей;"
+                    ]
+                )
+            ),
+
             [],
             "",
             1.1,
@@ -585,8 +663,6 @@ unsupported_term_test_() ->
         }
     ||
         Term <- [
-            'λαμβδα',
-            'ламбда',
             make_ref(),
             fun() -> foo end,
             hd(erlang:ports()), % TODO misc port versions?
