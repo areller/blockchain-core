@@ -88,7 +88,7 @@ target(ChallengerPubkeyBin, InitTargetRandState, ZoneRandState, Ledger, Vars) ->
         {error, _} = ErrorResp ->
             ErrorResp;
         {ok, {InitHex, InitHexRandState}} ->
-            lager:info("*** target got InitHex and InitHexRandState", [InitHex, InitHexRandState]),
+            lager:info("*** target got InitHex ~p and InitHexRandState ~p", [InitHex, InitHexRandState]),
             target_(
                 ChallengerPubkeyBin,
                 InitTargetRandState,
