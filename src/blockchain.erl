@@ -1157,6 +1157,7 @@ add_block_(Block, Blockchain, Syncing) ->
                                              Ledger, Height, Blockchain);
                         _ -> ok
                     end,
+
                     case blockchain_txn:Fun(Block, Blockchain, BeforeCommit, IsRescue) of
                         {error, Reason}=Error ->
                             lager:error("Error absorbing transaction, Ignoring Hash: ~p, Reason: ~p", [blockchain_block:hash_block(Block), Reason]),

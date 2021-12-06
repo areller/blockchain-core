@@ -78,6 +78,7 @@
 
     find_poc/2,
     request_poc/6,
+    process_poc_keys/4,
     save_public_poc/5,
     find_public_poc/2,
     delete_public_poc/2,
@@ -1974,6 +1975,27 @@ delete_poc(OnionKeyHash, Challenger, Ledger) ->
             end
     end.
 
+-spec process_poc_keys(
+    Block :: blockchain_block:block(),
+    BlockHeight :: pos_integer(),
+    BlockHash :: binary(),
+    Ledger :: ledger()
+) -> ok.
+process_poc_keys(Block, BlockHeight, BlockHash, Ledger) ->
+    %% we need to update the ledger with public poc data
+    %% based on the blocks poc ephemeral keys
+    %% these will be a prop with tuples: {MemberPosInCG :: Integer, PocKeyHash :: binary()}
+    BlockPocEphemeralKeys = blockchain_block_v1:poc_keys(Block),
+    {ok, CGMembers} = blockchain_ledger_v1:consensus_members(Ledger),
+    lists:foreach(
+        fun({CGPos, OnionKeyHash}) ->
+            %% the published poc key is a hash of the public key, aka the onion key hash
+            ChallengerAddr = lists:nth(CGPos, CGMembers),
+            lager:info("saving public poc data for poc key ~p and challenger ~p", [OnionKeyHash, ChallengerAddr]),
+            catch ok = blockchain_ledger_v1:save_public_poc(OnionKeyHash, ChallengerAddr, BlockHash, BlockHeight, Ledger)
+        end,
+        BlockPocEphemeralKeys),
+    ok.
 
 -spec save_public_poc(  OnionKeyHash :: binary(),
                         Challenger :: libp2p_crypto:pubkey_bin(),
@@ -2070,7 +2092,33 @@ maybe_gc_pocs(Chain, Ledger) ->
         _ ->
             maybe_gc_pocs(Chain, Ledger, undefined)
     end.
-maybe_gc_pocs(_Chain, _Ledger, validator) ->
+maybe_gc_pocs(_Chain, Ledger, validator) ->
+    %% iterate over the public POCs,
+    %% delete any which are beyond the lifespan
+    %% of when the active POC would have ended
+    %% and any receipts txn would have been
+    %% 'expected' to be absorbed
+    {ok, CurHeight} = current_height(Ledger),
+    PublicPOCs = active_public_pocs(Ledger),
+    lists:foreach(
+        fun(PublicPOC) ->
+            POCStartHeight = blockchain_ledger_poc_v3:start_height(PublicPOC),
+            OnionKeyHash = blockchain_ledger_poc_v3:onion_key_hash(PublicPOC),
+            %% the public poc data is required by the receipts v2 txn absorb
+            %% the public poc will be GCed as part of that absorb
+            %% but in case that fails we will GC it here after giving
+            %% the txn N blocks to be absorbed
+            %% TODO - make '200' below a chain var or reuse existing challenge interval
+            case (CurHeight - POCStartHeight) > 200  of
+                true ->
+                    %% the lifespan of the POC for this key has passed, we can GC
+                    ok = delete_public_poc(OnionKeyHash, Ledger);
+                _ ->
+                    ok
+            end
+        end,
+        PublicPOCs
+    ),
     ok;
 maybe_gc_pocs(Chain, Ledger, _) ->
     {ok, Height} = current_height(Ledger),
