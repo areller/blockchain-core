@@ -66,7 +66,8 @@
 -type unsound() ::
       {uncompressed_data_bad_size, {expected, non_neg_integer(), actual, non_neg_integer()}}
     | list_empty_with_non_nil_tail
-    | {atom_length_exceeds_max, pos_integer()}
+    | atom_length_exceeds_system_limit
+    | atom_characters_invalid
     | {sign_invalid, integer()}
     | {big_int_data_of_bad_size, binary()}
     .
@@ -159,8 +160,6 @@
 
 %% fun M:F/A
 -define(TAG_EXPORT_EXT         , 113).
-
--define(MAX_LEN_ATOM_EXT, 255).
 
 -spec from_bin(binary()) -> result().
 from_bin(<<Bin/binary>>) ->
@@ -456,10 +455,9 @@ tuple_ext(Arity, <<Rest0/binary>>) ->
 
 -spec small_atom_utf8_ext(binary()) -> result_internal(atom()).
 small_atom_utf8_ext(<<Len:8/integer-unsigned, AtomName:Len/binary, Rest/binary>>) ->
-    {ok, {binary_to_atom(AtomName), Rest}};
+    bin_to_atom('SMALL_ATOM_UTF8_EXT', AtomName, Rest);
 small_atom_utf8_ext(<<Bin/binary>>) ->
     {error, {frame, 'SMALL_ATOM_UTF8_EXT', {unmatched, Bin}}}.
-
 
 %% ATOM_UTF8_EXT
 %% 2       Len
@@ -469,7 +467,7 @@ small_atom_utf8_ext(<<Bin/binary>>) ->
 %% followed by Len bytes containing the AtomName encoded in UTF-8.
 -spec atom_utf8_ext(binary()) -> result_internal(atom()).
 atom_utf8_ext(<<Len:16/integer-unsigned, AtomName:Len/binary, Rest/binary>>) ->
-    {ok, {binary_to_atom(AtomName), Rest}};
+    bin_to_atom('ATOM_UTF8_EXT', AtomName, Rest);
 atom_utf8_ext(<<Bin/binary>>) ->
     {error, {frame, 'ATOM_UTF8_EXT', {unmatched, Bin}}}.
 
@@ -483,17 +481,22 @@ atom_utf8_ext(<<Bin/binary>>) ->
 %% The maximum allowed value for Len is 255.
 -spec atom_ext(binary()) -> result_internal(atom()).
 atom_ext(<<Len:16/integer-unsigned-big, AtomName:Len/binary, Rest/binary>>) ->
-    case Len =< ?MAX_LEN_ATOM_EXT of
-        false ->
-            {error, {frame, 'ATOM_EXT', {unsound, {atom_length_exceeds_max, Len}}}};
-        true ->
-            {ok, {binary_to_atom(AtomName), Rest}}
-    end;
+    bin_to_atom('ATOM_EXT', AtomName, Rest);
 atom_ext(<<Bin/binary>>) ->
     {error, {frame, 'ATOM_EXT', {unmatched, Bin}}}.
 
-%% END atoms ==================================================================
+-spec bin_to_atom(frame(), binary(), binary()) -> result_internal(atom()).
+bin_to_atom(F, <<AtomName/binary>>, <<Rest/binary>>) ->
+    try
+        {ok, {binary_to_atom(AtomName), Rest}}
+    catch
+        error:badarg ->
+            {error, {frame, F, {unsound, atom_characters_invalid}}};
+        error:system_limit ->
+            {error, {frame, F, {unsound, atom_length_exceeds_system_limit}}}
+    end.
 
+%% END atoms ==================================================================
 
 %% STRING_EXT
 %% 2       Len
