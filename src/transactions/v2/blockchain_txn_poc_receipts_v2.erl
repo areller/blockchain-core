@@ -888,7 +888,7 @@ to_json(Txn, Opts) ->
       path => [blockchain_poc_path_element_v1:to_json(Elem, ElemOpts) || {Elem, ElemOpts} <- PathElems],
       fee => fee(Txn),
       challenger => ?BIN_TO_B58(challenger(Txn)),
-      block_hash => ?BIN_TO_B58(block_hash(Txn))
+      block_hash => ?BIN_TO_B64(block_hash(Txn))
      }.
 
 
