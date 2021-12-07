@@ -264,7 +264,7 @@ binary_ext(<<Bin/binary>>) ->
 %% map.
 -spec map_ext(binary()) -> result_internal(#{t() => t()}).
 map_ext(<<Arity:32/integer-unsigned-big, Rest0/binary>>) ->
-    case map_pairs(Arity, [], Rest0) of
+    case map_pairs(Arity, Rest0) of
         {ok, {Pairs, Rest1}} ->
             Term = maps:from_list(Pairs), % TODO Handle errors?
             {ok, {Term, Rest1}};
@@ -273,6 +273,9 @@ map_ext(<<Arity:32/integer-unsigned-big, Rest0/binary>>) ->
     end;
 map_ext(<<Bin/binary>>) ->
     {error, {frame, 'MAP_EXT', {unmatched, Bin}}}.
+
+map_pairs(N, <<Rest/binary>>) ->
+    map_pairs(N, [], <<Rest/binary>>).
 
 -spec map_pairs(non_neg_integer(), [{t(), t()}], binary()) ->
     result_internal([{t(), t()}]).
@@ -355,7 +358,7 @@ compressed(<<Bin/binary>>) ->
 %% Length  Elements    Tail
 -spec list_ext(binary()) -> result_internal(maybe_improper_list(t(), t())).
 list_ext(<<Len:32/integer-unsigned-big, Rest0/binary>>) ->
-    case list_elements(Len, Rest0, []) of
+    case list_elements(Len, Rest0) of
         {ok, {Elements, Rest1}} ->
             case frame(Rest1) of
                 {ok, {Tail, Rest2}} ->
@@ -374,6 +377,9 @@ list_ext(<<Len:32/integer-unsigned-big, Rest0/binary>>) ->
     end;
 list_ext(<<Bin/binary>>) ->
     {error, {frame, 'LIST_EXT', {unmatched, Bin}}}.
+
+list_elements(N, <<Rest/binary>>) ->
+    list_elements(N, <<Rest/binary>>, []).
 
 -spec list_elements(non_neg_integer(), binary(), [t()]) ->
     result_internal([t()]).
@@ -418,7 +424,7 @@ large_tuple_ext(<<Bin/binary>>) ->
 
 -spec tuple_ext(non_neg_integer(), binary()) -> result_internal(tuple()).
 tuple_ext(Arity, <<Rest0/binary>>) ->
-    case list_elements(Arity, Rest0, []) of
+    case list_elements(Arity, Rest0) of
         {ok, {Elements, Rest1}} ->
             {ok, {list_to_tuple(Elements), Rest1}};
         {error, _}=Err ->
@@ -548,7 +554,7 @@ large_big_ext(<<Bin/binary>>) ->
 big_ext(F, Sign, <<Data/binary>>, <<Rest/binary>>) ->
     case big_int_sign_to_multiplier(F, Sign) of
         {ok, Multiplier} ->
-            case big_int_data(F, Data, 0, 0) of
+            case big_int_data(F, Data) of
                 {ok, Int} ->
                     Term = Int * Multiplier,
                     {ok, {Term, Rest}};
@@ -563,6 +569,9 @@ big_ext(F, Sign, <<Data/binary>>, <<Rest/binary>>) ->
 big_int_sign_to_multiplier(_, 0) -> {ok,  1};
 big_int_sign_to_multiplier(_, 1) -> {ok, -1};
 big_int_sign_to_multiplier(F, S) -> {error, {frame, F, {unsound, {sign_invalid, S}}}}.
+
+big_int_data(F, Data) ->
+    big_int_data(F, Data, 0, 0).
 
 -spec big_int_data(frame(), binary(), integer(), integer()) -> result(integer()).
 big_int_data(_, <<>>, _, Int) ->
