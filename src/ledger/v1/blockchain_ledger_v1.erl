@@ -933,7 +933,12 @@ raw_fingerprint(Ledger, Extended) ->
                      {entries_cf(Ledger), blockchain_ledger_entry_v1},
                      {dc_entries_cf(Ledger), blockchain_ledger_data_credits_entry_v1},
                      {htlcs_cf(Ledger), blockchain_ledger_htlc_v1},
-                     {pocs_cf(Ledger), t2b},
+                     {pocs_cf(Ledger), case config(?poc_challenger_type, Ledger) of
+                                           validator ->
+                                               blockchain_ledger_poc_v3;
+                                           _ ->
+                                               t2b
+                                       end},
                      {securities_cf(Ledger), blockchain_ledger_security_entry_v1},
                      {routing_cf(Ledger), blockchain_ledger_routing_v1},
                      {state_channels_cf(Ledger), state_channel},
