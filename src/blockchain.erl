@@ -2836,24 +2836,31 @@ check_plausible_blocks(#blockchain{db=DB}=Chain, GossipedHash) ->
     {ok, Batch} = rocksdb:batch(),
     lists:foreach(fun(Block) ->
                           Hash = blockchain_block:hash_block(Block),
+                          lager:info("################ == processing block (~p)", [Hash]),
                           try can_add_block(Block, Chain) of
                               {true, _IsRescue} ->
                                   %% TODO try to retain the binary block through here and pass it into add_block to
                                   %% save on another serialize() call
+                                  lager:info("################ == before adding block (~p)", [Hash]),
                                   add_block_(Block, Chain, GossipedHash /= Hash),
+                                  lager:info("################ == before removing block (~p)", [Hash]),
                                   remove_plausible_block(Chain, Batch, Hash, blockchain_block:height(Block));
                               exists ->
                                   case is_block_plausible(Block, Chain) of
                                       true ->
                                           %% still plausible, leave it alone
+                                          lager:info("################ == before okaying is_block_plausible (~p)", [Hash]),
                                           ok;
                                       false ->
+                                          lager:info("################ == before removing is_block_plausible (~p)", [Hash]),
                                           remove_plausible_block(Chain, Batch, Hash, blockchain_block:height(Block))
                                   end;
                               _Error ->
+                                  lager:info("################ == before erroring1 (~p)", [Hash]),
                                   remove_plausible_block(Chain, Batch, Hash, blockchain_block:height(Block))
                           catch
                               _:_ ->
+                                  lager:info("################ == before erroring2 (~p)", [Hash]),
                                   remove_plausible_block(Chain, Batch, Hash, blockchain_block:height(Block))
                           end
                   end, SortedBlocks),
