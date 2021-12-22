@@ -38,6 +38,7 @@
     have_plausible_block/2,
     save_plausible_blocks/2,
     check_plausible_blocks/2,
+    get_plausible_blocks/1,
 
     last_block_add_time/1,
 
@@ -2776,8 +2777,11 @@ check_plausible_blocks(Chain) ->
 
 -spec check_plausible_blocks(blockchain(), binary()) -> ok.
 check_plausible_blocks(#blockchain{db=DB}=Chain, GossipedHash) ->
+    lager:info("################ check_plausible_blocks - waiting for lock to be acquired"),
     blockchain_lock:acquire(), %% need the lock and we can get called without holding it
+    lager:info("################ check_plausible_blocks - lock acquired"),
     Blocks = get_plausible_blocks(Chain),
+    lager:info("################ check_plausible_blocks - got plausible blocks"),
     SortedBlocks = lists:sort(fun(A, B) -> blockchain_block:height(A) =< blockchain_block:height(B) end, Blocks),
     {ok, Batch} = rocksdb:batch(),
     lists:foreach(fun(Block) ->
@@ -2803,7 +2807,9 @@ check_plausible_blocks(#blockchain{db=DB}=Chain, GossipedHash) ->
                                   remove_plausible_block(Chain, Batch, Hash, blockchain_block:height(Block))
                           end
                   end, SortedBlocks),
+    lager:info("################ check_plausible_blocks - before write db"),
     rocksdb:write_batch(DB, Batch, [{sync, true}]),
+    lager:info("################ check_plausible_blocks - after write db"),
     blockchain_lock:release().
 
 -spec get_plausible_blocks(blockchain()) -> [blockchain_block:block()].
