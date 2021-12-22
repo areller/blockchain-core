@@ -453,7 +453,7 @@ absorb_and_commit(Block, Chain0, BeforeCommit, Rescue) ->
                                     ok
                             end,
                             End3 = erlang:monotonic_time(millisecond),
-                            lager:info("validation took ~p absorb took ~p post took ~p ms for block height ~p",
+                            lager:info("validation took ~p absorb took2 ~p post took ~p ms for block height ~p",
                                        [End - Start, End2 - End, End3 - End2, Height]),
                             ok;
                         Any ->
@@ -499,7 +499,7 @@ unvalidated_absorb_and_commit(Block, Chain0, BeforeCommit, Rescue) ->
                             absorb_delayed(Block, Chain0),
                             absorb_aux(Block, Chain0),
                             End3 = erlang:monotonic_time(millisecond),
-                            lager:info("validation took ~p absorb took ~p post took ~p ms height ~p",
+                            lager:info("validation took ~p absorb took3 ~p post took ~p ms height ~p",
                                        [End - Start, End2 - End, End3 - End2, Height]),
                             ok;
                         Any ->
