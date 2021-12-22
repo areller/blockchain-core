@@ -1178,6 +1178,91 @@ add_block_(Block, Blockchain, Syncing) ->
             replay_blocks(Blockchain, Syncing, LedgerHeight, BlockchainHeight)
     end.
 
+add_block2_(Block, Blockchain, Syncing) ->
+    %% TODO: we know that swarm calls can block, it would be nice if we had all the pubkey bin and
+    %% tid calls threaded through from the top
+    lager:info("################ ==1 before getting blockchain ledger"),
+    Ledger = blockchain:ledger(Blockchain),
+    lager:info("################ ==1 after getting blockchain ledger"),
+    {ok, LedgerHeight} = blockchain_ledger_v1:current_height(Ledger),
+    {ok, BlockchainHeight} = blockchain:height(Blockchain),
+    lager:info("################ ==1 after getting heights"),
+    FollowMode = follow_mode(),
+    lager:info("################ ==1 after getting follow mode"),
+    case LedgerHeight == BlockchainHeight of
+        true ->
+            case can_add_block(Block, Blockchain) of
+                {true, IsRescue} ->
+                    Height = blockchain_block:height(Block),
+                    Hash = blockchain_block:hash_block(Block),
+                    Sigs = blockchain_block:signatures(Block),
+                    MyAddress = try blockchain_swarm:pubkey_bin() catch _:_ -> nomatch end,
+                    BeforeCommit = fun(FChain, FHash) ->
+                                           lager:debug("adding block ~p", [Height]),
+                                           ok = ?save_block(Block, Blockchain),
+                                           ok = run_gc_hooks(FChain, FHash)
+                                   end,
+                    {Signers, _Signatures} = lists:unzip(Sigs),
+                    Fun = case lists:member(MyAddress, Signers) orelse FollowMode of
+                              true -> unvalidated_absorb_and_commit;
+                              _ -> absorb_and_commit
+                          end,
+                    %% 0 can never be true below
+                    SnapHeight = application:get_env(blockchain, blessed_snapshot_block_height, 0),
+                    case blockchain_block_v1:snapshot_hash(Block) of
+                        <<>> ->
+                            ok;
+                        %% check the snap height as it's pointless to do this work for the snapshot
+                        %% we're currently in the process of loading
+                        ConsensusHash when Height /= (SnapHeight - 1) ->
+                            lager:info("################ ==1 before processing snapshot"),
+                            process_snapshot(ConsensusHash, MyAddress, Signers,
+                                             Ledger, Height, Blockchain);
+                        _ -> ok
+                    end,
+                    case blockchain_txn:Fun(Block, Blockchain, BeforeCommit, IsRescue) of
+                        {error, Reason}=Error ->
+                            lager:error("Error absorbing transaction, Ignoring Hash: ~p, Reason: ~p", [blockchain_block:hash_block(Block), Reason]),
+                            case application:get_env(blockchain, drop_snapshot_cache_on_absorb_failure, true) of
+                                true ->
+                                    lager:info("dropping all snapshots from cache"),
+                                    blockchain_ledger_v1:drop_snapshots(Ledger);
+                                false ->
+                                    ok
+                            end,
+                            Error;
+                        ok ->
+                            run_absorb_block_hooks(Syncing, Hash, Blockchain)
+                    end;
+                plausible ->
+                    %% regossip plausible blocks
+                    Hash = blockchain_block:hash_block(Block),
+                    lager:info("################ ==1 before save plausible block"),
+                    case save_plausible_block(Block, Hash, Blockchain) of
+                        exists -> ok; %% already have it
+                        ok -> plausible %% tell the gossip handler
+                    end;
+                Other ->
+                    %% this can either be an error tuple or `ok' when its the genesis block we already have
+                    Other
+            end;
+        false when BlockchainHeight < LedgerHeight ->
+            %% ledger is higher than blockchain, try to validate this block
+            %% and see if we can save it
+            lager:info("################ ==1 before can_add_block"),
+            case can_add_block(Block, Blockchain) of
+                {true, _IsRescue} ->
+                    lager:info("################ ==1 before save block"),
+                    ?save_block(Block, Blockchain);
+                Other ->
+                    Other
+            end;
+        false ->
+            %% blockchain is higher than ledger, try to play the chain forwards
+            lager:info("################ ==1 before replay blocks"),
+            replay_blocks(Blockchain, Syncing, LedgerHeight, BlockchainHeight)
+    end.
+
 process_snapshot(ConsensusHash, MyAddress, Signers,
                  Ledger, Height, Blockchain) ->
     case lists:member(MyAddress, Signers) orelse follow_mode() of
@@ -2842,7 +2927,7 @@ check_plausible_blocks(#blockchain{db=DB}=Chain, GossipedHash) ->
                                   %% TODO try to retain the binary block through here and pass it into add_block to
                                   %% save on another serialize() call
                                   lager:info("################ == before adding block (~p)", [Hash]),
-                                  add_block_(Block, Chain, GossipedHash /= Hash),
+                                  add_block2_(Block, Chain, GossipedHash /= Hash),
                                   lager:info("################ == before removing block (~p)", [Hash]),
                                   remove_plausible_block(Chain, Batch, Hash, blockchain_block:height(Block));
                               exists ->
