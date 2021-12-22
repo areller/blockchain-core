@@ -2825,10 +2825,6 @@ check_plausible_blocks2(#blockchain{db=DB}=Chain, GossipedHash) ->
     lager:info("################2 check_plausible_blocks - after write db"),
     blockchain_lock:release().
 
--spec check_plausible_blocks(blockchain()) -> ok.
-check_plausible_blocks(Chain) ->
-    check_plausible_blocks(Chain, <<>>).
-
 -spec check_plausible_blocks(blockchain(), binary()) -> ok.
 check_plausible_blocks(#blockchain{db=DB}=Chain, GossipedHash) ->
     lager:info("################ check_plausible_blocks - waiting for lock to be acquired"),
