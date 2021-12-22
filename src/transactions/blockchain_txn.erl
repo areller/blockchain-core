@@ -382,6 +382,7 @@ validate2([], Valid, Invalid, PType, PBuf, Chain) ->
     lager:info("valid: ~p, invalid: ~p", [types(Valid1), types(Invalid1)]),
     {lists:reverse(Valid1), Invalid1};
 validate2([Txn | Tail] = Txns, Valid, Invalid, PType, PBuf, Chain) ->
+    lager:info("################ ==4 enter validate2"),
     Type = ?MODULE:type(Txn),
     case Type of
         blockchain_txn_poc_request_v1 when PType == undefined orelse PType == Type ->
@@ -394,17 +395,19 @@ validate2([Txn | Tail] = Txns, Valid, Invalid, PType, PBuf, Chain) ->
                 ok ->
                     case ?MODULE:absorb2(Txn, Chain) of
                         ok ->
+                            lager:info("################ ==4 validate2 after absrob2 ok"),
                             maybe_log_duration(type(Txn), Start),
                             validate2(Tail, [Txn|Valid], Invalid, PType, PBuf, Chain);
                         {error, {bad_nonce, {_NonceType, Nonce, LedgerNonce}}} when Nonce > LedgerNonce + 1 ->
                             %% we don't have enough context to decide if this transaction is valid yet, keep it
                             %% but don't include it in the block (so it stays in the buffer)
+                            lager:info("################ ==4 validate2 after absrob2 error1"),
                             validate2(Tail, Valid, Invalid, PType, PBuf, Chain);
                         {error, {InvalidReason, _Details}} = Error ->
-                            lager:warning("invalid txn while absorbing ~p : ~p / ~s", [Type, Error, print(Txn)]),
+                            lager:warning("################ invalid txn while absorbing ~p : ~p / ~s", [Type, Error, print(Txn)]),
                             validate2(Tail, Valid, [{Txn, InvalidReason} | Invalid], PType, PBuf, Chain);
                         {error, InvalidReason} = Error->
-                            lager:warning("invalid txn while absorbing ~p : ~p / ~s", [Type, Error, print(Txn)]),
+                            lager:warning("################ invalid txn while absorbing ~p : ~p / ~s", [Type, Error, print(Txn)]),
                             validate2(Tail, Valid, [{Txn, InvalidReason} | Invalid], PType, PBuf, Chain)
                     end;
                 {error, {bad_nonce, {_NonceType, Nonce, LedgerNonce}}} when Nonce > LedgerNonce + 1 ->
