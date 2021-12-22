@@ -413,23 +413,25 @@ validate2([Txn | Tail] = Txns, Valid, Invalid, PType, PBuf, Chain) ->
                 {error, {bad_nonce, {_NonceType, Nonce, LedgerNonce}}} when Nonce > LedgerNonce + 1 ->
                     %% we don't have enough context to decide if this transaction is valid yet, keep it
                     %% but don't include it in the block (so it stays in the buffer)
+                    lager:warning("################ invalid txn111111"),
                     validate2(Tail, Valid, Invalid, PType, PBuf, Chain);
                 {error, {InvalidReason, _Details}} = Error ->
-                    lager:warning("invalid txn ~p : ~p / ~s", [Type, Error, print(Txn)]),
+                    lager:warning("################ invalid txn ~p : ~p / ~s", [Type, Error, print(Txn)]),
                     %% any other error means we drop it
                     validate2(Tail, Valid, [{Txn, InvalidReason} | Invalid], PType, PBuf, Chain);
                 {error, InvalidReason}=Error when is_atom(InvalidReason) ->
-                    lager:warning("invalid txn ~p : ~p / ~s", [Type, Error, print(Txn)]),
+                    lager:warning("################ invalid txn ~p : ~p / ~s", [Type, Error, print(Txn)]),
                     %% any other error means we drop it
                     validate2(Tail, Valid, [{Txn, InvalidReason} | Invalid], PType, PBuf, Chain);
                 Error ->
-                    lager:warning("invalid txn ~p : ~p / ~s", [Type, Error, print(Txn)]),
+                    lager:warning("################ invalid txn ~p : ~p / ~s", [Type, Error, print(Txn)]),
                     %% any other error means we drop it
                     %% this error is unexpected and could be a crash report or some other weirdness
                     %% we will use a generic error reason
                     validate2(Tail, Valid, [{Txn, validation_failed} | Invalid], PType, PBuf, Chain)
             end;
         _Else ->
+            lager:info("################ ==4 validate2 before pmap"),
             Res = blockchain_utils:pmap(
                     fun(T) ->
                             Start = erlang:monotonic_time(millisecond),
@@ -438,6 +440,7 @@ validate2([Txn | Tail] = Txns, Valid, Invalid, PType, PBuf, Chain) ->
                             maybe_log_duration(Ty, Start),
                             {T, Ret}
                     end, lists:reverse(PBuf)),
+            lager:info("################ ==4 validate2 before separate_res"),
             {Valid1, Invalid1} = separate_res(Res, Chain, Valid, Invalid),
             validate2(Txns, Valid1, Invalid1, undefined, [], Chain)
     end.
