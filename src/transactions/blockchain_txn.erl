@@ -389,7 +389,7 @@ validate2([], Valid, Invalid, PType, PBuf, Chain) ->
     lager:info("valid: ~p, invalid: ~p", [types(Valid1), types(Invalid1)]),
     {lists:reverse(Valid1), Invalid1};
 validate2([Txn | Tail] = Txns, Valid, Invalid, PType, PBuf, Chain) ->
-    lager:info("################ ==4 enter validate2"),
+    lager:info("################ ==4 enter validate2()"),
     Type = ?MODULE:type(Txn),
     case Type of
         blockchain_txn_poc_request_v1 when PType == undefined orelse PType == Type ->
