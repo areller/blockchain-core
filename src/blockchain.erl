@@ -2816,10 +2816,13 @@ check_plausible_blocks(#blockchain{db=DB}=Chain, GossipedHash) ->
 
 check_plausible_blocks_test(#blockchain{db=DB}=Chain, GossipedHash) ->
     lager:info("@@@@@@@@@@@@@@@@ check_plausible_blocks - waiting for lock to be acquired"),
+    Time1 = erlang:monotonic_time(millisecond),
     blockchain_lock:acquire(), %% need the lock and we can get called without holding it
-    lager:info("@@@@@@@@@@@@@@@@ check_plausible_blocks - lock acquired"),
+    Time2 = erlang:monotonic_time(millisecond),
+    lager:info("@@@@@@@@@@@@@@@@ (~p) check_plausible_blocks - lock acquired", [Time2 - Time1]),
     Blocks = get_plausible_blocks(Chain),
-    lager:info("@@@@@@@@@@@@@@@@ check_plausible_blocks - got plausible blocks"),
+    Time3 = erlang:monotonic_time(millisecond),
+    lager:info("@@@@@@@@@@@@@@@@ (~p) check_plausible_blocks - got plausible blocks", [Time3 - Time2]),
     SortedBlocks = lists:sort(fun(A, B) -> blockchain_block:height(A) =< blockchain_block:height(B) end, Blocks),
     {ok, Batch} = rocksdb:batch(),
     lists:foreach(fun(Block) ->
@@ -2845,9 +2848,11 @@ check_plausible_blocks_test(#blockchain{db=DB}=Chain, GossipedHash) ->
                                   remove_plausible_block(Chain, Batch, Hash, blockchain_block:height(Block))
                           end
                   end, SortedBlocks),
-    lager:info("@@@@@@@@@@@@@@@@ check_plausible_blocks - before write db"),
+    Time4 = erlang:monotonic_time(millisecond),
+    lager:info("@@@@@@@@@@@@@@@@ (~p) check_plausible_blocks - before write db", [Time4 - Time3]),
     rocksdb:write_batch(DB, Batch, [{sync, true}]),
-    lager:info("@@@@@@@@@@@@@@@@ check_plausible_blocks - after write db"),
+    Time5 = erlang:monotonic_time(millisecond),
+    lager:info("@@@@@@@@@@@@@@@@ (~p) check_plausible_blocks - after write db", [Time5 - Time4]),
     blockchain_lock:release().
 
 -spec get_plausible_blocks(blockchain()) -> [blockchain_block:block()].
