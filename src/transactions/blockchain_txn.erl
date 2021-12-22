@@ -397,9 +397,11 @@ validate2([Txn | Tail] = Txns, Valid, Invalid, PType, PBuf, Chain) ->
         blockchain_txn_poc_receipts_v1 when PType == undefined orelse PType == Type ->
             validate2(Tail, Valid, Invalid, Type, [Txn | PBuf], Chain);
         _Else when PType == undefined ->
+            lager:info("################ ==4 validate2 before is_valid"),
             Start = erlang:monotonic_time(millisecond),
             case catch Type:is_valid(Txn, Chain) of
                 ok ->
+                    lager:info("################ ==4 validate2 before absorb2 after is_valid"),
                     case ?MODULE:absorb2(Txn, Chain) of
                         ok ->
                             lager:info("################ ==4 validate2 after absrob2 ok"),
