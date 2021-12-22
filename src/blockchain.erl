@@ -904,14 +904,16 @@ add_blocks(Blocks, Chain) ->
 
 add_blocks(Blocks, GossipedHash, Chain) ->
     blockchain_lock:acquire(),
+    lager:info("55555555555555 entered"),
     try
         Res = add_blocks_(Blocks, GossipedHash, Chain),
-        check_plausible_blocks(Chain, GossipedHash),
+        check_plausible_blocks3(Chain, GossipedHash),
         Res
     catch C:E:S ->
             lager:warning("crash adding blocks: ~p:~p ~p", [C, E, S]),
             {error, add_blocks_error}
     after
+        lager:info("55555555555555 exited"),
         blockchain_lock:release()
     end.
 
@@ -935,6 +937,7 @@ add_block(Block, Blockchain) ->
 -spec add_block(blockchain_block:block(), blockchain(), boolean()) -> ok | exists | plausible | {error, any()}.
 add_block(Block, #blockchain{db=DB, blocks=BlocksCF, heights=HeightsCF, default=DefaultCF} = Blockchain, Syncing) ->
     blockchain_lock:acquire(),
+    lager:info("44444444444444 entered"),
     try
         PrevHash = blockchain_block:prev_hash(Block),
         case missing_block(Blockchain) of
@@ -965,7 +968,7 @@ add_block(Block, #blockchain{db=DB, blocks=BlocksCF, heights=HeightsCF, default=
                     undefined ->
                         case add_block_(Block, Blockchain, Syncing) of
                             ok ->
-                                check_plausible_blocks(Blockchain),
+                                check_plausible_blocks2(Blockchain),
                                 ok;
                             Res ->  Res
                         end;
@@ -977,6 +980,7 @@ add_block(Block, #blockchain{db=DB, blocks=BlocksCF, heights=HeightsCF, default=
             lager:warning("error adding block: ~p:~p, ~p", [What, Why, Stack]),
             {error, Why}
     after
+        lager:info("44444444444444 exited"),
         blockchain_lock:release()
     end.
 
@@ -1295,6 +1299,7 @@ absorb_temp_blocks(Block, Blockchain, Syncing) ->
 
 absorb_temp_blocks_fun(Block, Blockchain=#blockchain{temp_blocks=TempBlocksCF}, Syncing) ->
     ok = blockchain_lock:acquire(),
+    lager:info("33333333333333 entered"),
     {ok, MainChainHeadHash} = blockchain:head_hash(Blockchain),
     %% ok, now build the chain back to the oldest block in the temporary
     %% storage or to the head of the main chain, whichever comes first
@@ -1312,6 +1317,7 @@ absorb_temp_blocks_fun(Block, Blockchain=#blockchain{temp_blocks=TempBlocksCF}, 
         Res ->
             lager:info("temp Chain ~p", [length(Chain)]),
             lager:warning("Saw assumed valid block, but cannot connect it to the main chain ~p", [Res]),
+            lager:info("33333333333333 exited1"),
             blockchain_lock:release(),
             ok
     end.
@@ -1320,6 +1326,7 @@ absorb_temp_blocks_fun_([], Chain, _Syncing) ->
     %% we did it!
     ok = blockchain_worker:absorb_done(),
     delete_temp_blocks(Chain),
+    lager:info("33333333333333 exited2"),
     blockchain_lock:release(),
     ok;
 absorb_temp_blocks_fun_([BlockHash|Chain], Blockchain, Syncing) ->
@@ -1511,6 +1518,7 @@ reset_ledger(Height,
                          heights = HeightsCF} = Chain,
              Revalidate) ->
     blockchain_lock:acquire(),
+    lager:info("22222222222222 entered"),
     %% check this is safe to do
     {ok, StartBlock} = get_block(Height, Chain),
     {ok, GenesisHash} = genesis_hash(Chain),
@@ -1531,6 +1539,7 @@ reset_ledger(Height,
             %% can't do this, we're missing a block somwewhere along the line
             MissingHash = blockchain_block:prev_hash(LastKnownBlock),
             MissingHeight = blockchain_block:height(LastKnownBlock) - 1,
+            lager:info("22222222222222 exited1"),
             blockchain_lock:release(),
             {error, {missing_block, MissingHash, MissingHeight}};
         true ->
@@ -1607,6 +1616,7 @@ reset_ledger(Height,
 
             blockchain_worker:blockchain(Chain1),
 
+            lager:info("22222222222222 exited2"),
             blockchain_lock:release(),
             {ok, Chain2}
     end.
@@ -2551,6 +2561,7 @@ maybe_continue_resync(Blockchain, Blocking) ->
 
 resync_fun(ChainHeight, LedgerHeight, Blockchain) ->
     blockchain_lock:acquire(),
+    lager:info("11111111111111 entered"),
     case get_block(LedgerHeight, Blockchain) of
         {error, _} when LedgerHeight == 0 ->
             %% reload the genesis block
@@ -2570,6 +2581,7 @@ resync_fun(ChainHeight, LedgerHeight, Blockchain) ->
             %% chain is missing the block the ledger is stuck at
             %% it is unclear what we should do here.
             lager:warning("cannot resume ledger resync, missing block ~p", [LedgerHeight]),
+            lager:info("11111111111111 exited1"),
             blockchain_lock:release();
         {ok, LedgerLastBlock} ->
             {ok, StartBlock} = blockchain:head_block(Blockchain),
@@ -2590,6 +2602,7 @@ resync_fun(ChainHeight, LedgerHeight, Blockchain) ->
                     %% we can probably find the highest contiguous chain and resync to there and repair the chain by rewinding
                     %% the head and deleting the orphaned blocks
                     lager:warning("cannot resume ledger resync, missing block ~p", [blockchain_block:height(LastKnownBlock)]),
+                    lager:info("11111111111111 exited2"),
                     blockchain_lock:release();
                 true ->
                     %% ok, we can keep replying blocks
@@ -2609,6 +2622,7 @@ resync_fun(ChainHeight, LedgerHeight, Blockchain) ->
                                               run_absorb_block_hooks(true, Hash, Blockchain)
                                       end, HashChain)
                     after
+                        lager:info("11111111111111 exited3"),
                         blockchain_lock:release()
                     end
             end
@@ -2772,6 +2786,45 @@ get_raw_plausibles(Height, #blockchain{db=DB, plausible_blocks=CF}) ->
             []
     end.
 
+check_plausible_blocks2(Chain) ->
+    check_plausible_blocks2(Chain, <<>>).
+
+check_plausible_blocks2(#blockchain{db=DB}=Chain, GossipedHash) ->
+    lager:info("################2 check_plausible_blocks - waiting for lock to be acquired"),
+    blockchain_lock:acquire(), %% need the lock and we can get called without holding it
+    lager:info("################2 check_plausible_blocks - lock acquired"),
+    Blocks = get_plausible_blocks(Chain),
+    lager:info("################2 check_plausible_blocks - got plausible blocks"),
+    SortedBlocks = lists:sort(fun(A, B) -> blockchain_block:height(A) =< blockchain_block:height(B) end, Blocks),
+    {ok, Batch} = rocksdb:batch(),
+    lists:foreach(fun(Block) ->
+                          Hash = blockchain_block:hash_block(Block),
+                          try can_add_block(Block, Chain) of
+                              {true, _IsRescue} ->
+                                  %% TODO try to retain the binary block through here and pass it into add_block to
+                                  %% save on another serialize() call
+                                  add_block_(Block, Chain, GossipedHash /= Hash),
+                                  remove_plausible_block(Chain, Batch, Hash, blockchain_block:height(Block));
+                              exists ->
+                                  case is_block_plausible(Block, Chain) of
+                                      true ->
+                                          %% still plausible, leave it alone
+                                          ok;
+                                      false ->
+                                          remove_plausible_block(Chain, Batch, Hash, blockchain_block:height(Block))
+                                  end;
+                              _Error ->
+                                  remove_plausible_block(Chain, Batch, Hash, blockchain_block:height(Block))
+                          catch
+                              _:_ ->
+                                  remove_plausible_block(Chain, Batch, Hash, blockchain_block:height(Block))
+                          end
+                  end, SortedBlocks),
+    lager:info("################2 check_plausible_blocks - before write db"),
+    rocksdb:write_batch(DB, Batch, [{sync, true}]),
+    lager:info("################2 check_plausible_blocks - after write db"),
+    blockchain_lock:release().
+
 -spec check_plausible_blocks(blockchain()) -> ok.
 check_plausible_blocks(Chain) ->
     check_plausible_blocks(Chain, <<>>).
@@ -2811,6 +2864,42 @@ check_plausible_blocks(#blockchain{db=DB}=Chain, GossipedHash) ->
     lager:info("################ check_plausible_blocks - before write db"),
     rocksdb:write_batch(DB, Batch, [{sync, true}]),
     lager:info("################ check_plausible_blocks - after write db"),
+    blockchain_lock:release().
+
+check_plausible_blocks3(#blockchain{db=DB}=Chain, GossipedHash) ->
+    lager:info("################3 check_plausible_blocks - waiting for lock to be acquired"),
+    blockchain_lock:acquire(), %% need the lock and we can get called without holding it
+    lager:info("################3 check_plausible_blocks - lock acquired"),
+    Blocks = get_plausible_blocks(Chain),
+    lager:info("################3 check_plausible_blocks - got plausible blocks"),
+    SortedBlocks = lists:sort(fun(A, B) -> blockchain_block:height(A) =< blockchain_block:height(B) end, Blocks),
+    {ok, Batch} = rocksdb:batch(),
+    lists:foreach(fun(Block) ->
+                          Hash = blockchain_block:hash_block(Block),
+                          try can_add_block(Block, Chain) of
+                              {true, _IsRescue} ->
+                                  %% TODO try to retain the binary block through here and pass it into add_block to
+                                  %% save on another serialize() call
+                                  add_block_(Block, Chain, GossipedHash /= Hash),
+                                  remove_plausible_block(Chain, Batch, Hash, blockchain_block:height(Block));
+                              exists ->
+                                  case is_block_plausible(Block, Chain) of
+                                      true ->
+                                          %% still plausible, leave it alone
+                                          ok;
+                                      false ->
+                                          remove_plausible_block(Chain, Batch, Hash, blockchain_block:height(Block))
+                                  end;
+                              _Error ->
+                                  remove_plausible_block(Chain, Batch, Hash, blockchain_block:height(Block))
+                          catch
+                              _:_ ->
+                                  remove_plausible_block(Chain, Batch, Hash, blockchain_block:height(Block))
+                          end
+                  end, SortedBlocks),
+    lager:info("################3 check_plausible_blocks - before write db"),
+    rocksdb:write_batch(DB, Batch, [{sync, true}]),
+    lager:info("################3 check_plausible_blocks - after write db"),
     blockchain_lock:release().
 
 

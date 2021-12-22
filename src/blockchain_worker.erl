@@ -416,6 +416,7 @@ handle_call({install_snapshot, Hash, Snapshot}, _From,
     case Mode == reset andalso Halt of
         false ->
             ok = blockchain_lock:acquire(),
+            lager:info("66666666666666 entered"),
             OldLedger = blockchain:ledger(Chain),
             blockchain_ledger_v1:clean(OldLedger),
             %% TODO proper error checking and recovery/retry
@@ -452,6 +453,7 @@ handle_call({install_snapshot, Hash, Snapshot}, _From,
                     %% we likely retain some old blocks, and we should absorb them
                     set_resyncing(ChainHeight, LedgerHeight, NewChain)
             end,
+            lager:info("66666666666666 exited"),
             blockchain_lock:release(),
             {reply, ok, maybe_sync(State#state{mode = normal, sync_paused = false,
                                                blockchain = NewChain, gossip_ref = GossipRef})};
@@ -463,6 +465,7 @@ handle_call({install_snapshot, Hash, Snapshot}, _From,
 handle_call({install_aux_snapshot, Snapshot}, _From,
             #state{blockchain = Chain, swarm = Swarm} = State) ->
     ok = blockchain_lock:acquire(),
+    lager:info("77777777777777 entered"),
     OldLedger = blockchain:ledger(Chain),
     blockchain_ledger_v1:clean_aux(OldLedger),
     NewLedger = blockchain_aux_ledger_v1:new(OldLedger),
@@ -472,6 +475,7 @@ handle_call({install_aux_snapshot, Snapshot}, _From,
     remove_handlers(Swarm),
     {ok, GossipRef} = add_handlers(Swarm, NewChain),
     notify({new_chain, NewChain}),
+    lager:info("77777777777777 exited"),
     blockchain_lock:release(),
     {reply, ok, maybe_sync(State#state{mode = normal, sync_paused = false,
                                        blockchain = NewChain, gossip_ref = GossipRef})};
