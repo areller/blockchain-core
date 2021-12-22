@@ -1091,6 +1091,120 @@ can_add_block(Block, Blockchain) ->
             end
     end.
 
+can_add_block2(Block, Blockchain) ->
+    Hash = blockchain_block:hash_block(Block),
+    lager:info("################ ==2 inside can_add_block (~p)", [Hash]),
+    {ok, GenesisHash} = blockchain:genesis_hash(Blockchain),
+    case blockchain_block:is_genesis(Block) of
+        true when Hash =:= GenesisHash ->
+            exists;
+        true ->
+            {error, unknown_genesis_block};
+        false ->
+            case blockchain:head_block_info(Blockchain) of
+                {error, Reason}=Error ->
+                    lager:error("could not get head hash ~p", [Reason]),
+                    Error;
+                {ok, #block_info_v2{hash=HeadHash, height=HeadHeight}} ->
+                    Height = blockchain_block:height(Block),
+                    {ok, ChainHeight} = blockchain:height(Blockchain),
+                    %% compute the ledger at the height of the chain in case we're
+                    %% re-adding a missing block (that was absorbed into the ledger)
+                    %% that's on the wrong side of an election or a chain var
+                    DelayedLedger = blockchain_ledger_v1:mode(delayed, blockchain:ledger(Blockchain)),
+                    {ok, DelayedHeight} = blockchain_ledger_v1:current_height(DelayedLedger),
+                    {ok, Ledger} = case Height < ChainHeight andalso Height >= DelayedHeight of
+                                       true -> blockchain:ledger_at(ChainHeight, Blockchain);
+                                       false -> {ok, blockchain:ledger(Blockchain)}
+                                   end,
+                    case
+                        blockchain_block:prev_hash(Block) =:= HeadHash andalso
+                         Height =:= HeadHeight + 1
+                    of
+                        false when HeadHash =:= Hash ->
+                            lager:debug("Already have this block"),
+                            exists;
+                        false ->
+                            case ?MODULE:has_block(Block, Blockchain) of
+                                true ->
+                                    %% we already have this, thanks
+                                    %% don't error here incase there's more blocks coming that *are* valid
+                                    exists;
+                                false ->
+                                    %% check the block is not contiguous
+                                    case Height > (ChainHeight + 1) of
+                                        true ->
+                                            lager:info("################ ==2 before is_block-plausible (~p)", [Hash]),
+                                            case is_block_plausible(Block, Blockchain) of
+                                                true -> plausible;
+                                                false ->
+                                                    lager:warning("higher block doesn't fit with our chain, block_height: ~p, head_block_height: ~p", [blockchain_block:height(Block),
+                                                                                                                                                HeadHeight]),
+                                                    {error, disjoint_chain}
+                                            end;
+                                        false ->
+                                            lager:warning("lower block doesn't fit with our chain, block_height: ~p, head_block_height: ~p", [blockchain_block:height(Block),
+                                                                                                                                              HeadHeight]),
+                                            %% if the block height is lower we probably don't care about it
+                                            {error, disjoint_chain}
+                                    end
+                            end;
+                        true ->
+                            lager:debug("prev hash matches the gossiped block"),
+                            lager:info("################ ==2 before getting consensus_members (~p)", [Hash]),
+                            case blockchain_ledger_v1:consensus_members(Ledger) of
+                                {error, _Reason}=Error ->
+                                    lager:error("could not get consensus_members ~p", [_Reason]),
+                                    Error;
+                                {ok, ConsensusAddrs} ->
+                                    N = length(ConsensusAddrs),
+                                    F = (N-1) div 3,
+                                    lager:info("################ ==2 before getting stuff1 (~p)", [Hash]),
+                                    {ok, KeyOrKeys} = get_key_or_keys(Ledger),
+                                    blockchain_ledger_v1:delete_context(Ledger),
+                                    Txns = blockchain_block:transactions(Block),
+                                    Sigs = blockchain_block:signatures(Block),
+                                    lager:info("################ ==2 before verifying signatures (~p)", [Hash]),
+                                    case blockchain_block:verify_signatures(Block,
+                                                                            ConsensusAddrs,
+                                                                            Sigs,
+                                                                            N - F,
+                                                                            KeyOrKeys)
+                                    of
+                                        false ->
+                                            lager:info("################ ==2 after verifying signatures (~p)", [Hash]),
+                                            {error, failed_verify_signatures};
+                                        {true, _, IsRescue} ->
+                                            lager:info("################ ==2 after verifying signatures1 (~p)", [Hash]),
+                                            SortedTxns = lists:sort(fun blockchain_txn:sort/2, Txns),
+                                            case Txns == SortedTxns of
+                                                false ->
+                                                    %% this double check is for just one block as
+                                                    %% far as we know; there was a bug with a few
+                                                    %% txns not being in the sorting order and they
+                                                    %% got in there wrong in that one block
+                                                    Filter =
+                                                        fun(T) ->
+                                                                blockchain_txn:type(T) /= blockchain_txn_state_channel_close_v1
+                                                        end,
+                                                    Txns2 = lists:filter(Filter, Txns),
+                                                    Sorted2 = lists:filter(Filter, SortedTxns),
+                                                    SortedTxns2 = lists:sort(fun blockchain_txn:sort/2, Sorted2),
+                                                    case Txns2 == SortedTxns2 of
+                                                        false ->
+                                                            {error, wrong_txn_order};
+                                                        true ->
+                                                            {true, IsRescue}
+                                                    end;
+                                                true ->
+                                                    {true, IsRescue}
+                                            end
+                                    end
+                            end
+                    end
+            end
+    end.
+
 get_key_or_keys(Ledger) ->
     case blockchain:config(?use_multi_keys, Ledger) of
         {ok, true} ->
@@ -1191,8 +1305,9 @@ add_block2_(Block, Blockchain, Syncing) ->
     lager:info("################ ==1 after getting follow mode"),
     case LedgerHeight == BlockchainHeight of
         true ->
-            case can_add_block(Block, Blockchain) of
+            case can_add_block2(Block, Blockchain) of
                 {true, IsRescue} ->
+                    lager:info("################ ==1 after can_add_block2 (true)"),
                     Height = blockchain_block:height(Block),
                     Hash = blockchain_block:hash_block(Block),
                     Sigs = blockchain_block:signatures(Block),
@@ -1220,6 +1335,7 @@ add_block2_(Block, Blockchain, Syncing) ->
                                              Ledger, Height, Blockchain);
                         _ -> ok
                     end,
+                    lager:info("################ ==1 before blockchain_txn:Fun"),
                     case blockchain_txn:Fun(Block, Blockchain, BeforeCommit, IsRescue) of
                         {error, Reason}=Error ->
                             lager:error("Error absorbing transaction, Ignoring Hash: ~p, Reason: ~p", [blockchain_block:hash_block(Block), Reason]),
@@ -1232,6 +1348,7 @@ add_block2_(Block, Blockchain, Syncing) ->
                             end,
                             Error;
                         ok ->
+                            lager:info("################ ==1 before run_absorb_block_hooks"),
                             run_absorb_block_hooks(Syncing, Hash, Blockchain)
                     end;
                 plausible ->
