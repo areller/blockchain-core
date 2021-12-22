@@ -75,7 +75,8 @@
     fee/1,
     fee_payer/2,
     validate/2, validate/3,
-    absorb/2,
+    validate2/3,
+    absorb/2, absorb2/2,
     print/1, print/2,
     sign/2,
     absorb_and_commit/3, absorb_and_commit/4, absorb_and_commit2/4, 
@@ -351,6 +352,93 @@ validate([Txn | Tail] = Txns, Valid, Invalid, PType, PBuf, Chain) ->
             validate(Txns, Valid1, Invalid1, undefined, [], Chain)
     end.
 
+
+validate2(Transactions, _Chain, true) ->
+    {Transactions, []};
+validate2(Transactions, Chain0, false) ->
+    Ledger0 = blockchain:ledger(Chain0),
+    Ledger1 = blockchain_ledger_v1:new_context(Ledger0),
+    Chain1 = blockchain:ledger(Ledger1, Chain0),
+    validate2(Transactions, [], [], undefined, [], Chain1).
+
+validate2([], Valid, Invalid, PType, PBuf, Chain) ->
+    {Valid1, Invalid1} =
+        case PType of
+            undefined ->
+                {Valid, Invalid};
+            _ ->
+                Res = blockchain_utils:pmap(
+                        fun(T) ->
+                                Start = erlang:monotonic_time(millisecond),
+                                Type = ?MODULE:type(T),
+                                Ret = (catch Type:is_valid(T, Chain)),
+                                maybe_log_duration(Type, Start),
+                                {T, Ret}
+                        end, lists:reverse(PBuf)),
+                separate_res(Res, Chain, Valid, Invalid)
+        end,
+    Ledger = blockchain:ledger(Chain),
+    blockchain_ledger_v1:delete_context(Ledger),
+    lager:info("valid: ~p, invalid: ~p", [types(Valid1), types(Invalid1)]),
+    {lists:reverse(Valid1), Invalid1};
+validate2([Txn | Tail] = Txns, Valid, Invalid, PType, PBuf, Chain) ->
+    Type = ?MODULE:type(Txn),
+    case Type of
+        blockchain_txn_poc_request_v1 when PType == undefined orelse PType == Type ->
+            validate2(Tail, Valid, Invalid, Type, [Txn | PBuf], Chain);
+        blockchain_txn_poc_receipts_v1 when PType == undefined orelse PType == Type ->
+            validate2(Tail, Valid, Invalid, Type, [Txn | PBuf], Chain);
+        _Else when PType == undefined ->
+            Start = erlang:monotonic_time(millisecond),
+            case catch Type:is_valid(Txn, Chain) of
+                ok ->
+                    case ?MODULE:absorb2(Txn, Chain) of
+                        ok ->
+                            maybe_log_duration(type(Txn), Start),
+                            validate2(Tail, [Txn|Valid], Invalid, PType, PBuf, Chain);
+                        {error, {bad_nonce, {_NonceType, Nonce, LedgerNonce}}} when Nonce > LedgerNonce + 1 ->
+                            %% we don't have enough context to decide if this transaction is valid yet, keep it
+                            %% but don't include it in the block (so it stays in the buffer)
+                            validate2(Tail, Valid, Invalid, PType, PBuf, Chain);
+                        {error, {InvalidReason, _Details}} = Error ->
+                            lager:warning("invalid txn while absorbing ~p : ~p / ~s", [Type, Error, print(Txn)]),
+                            validate2(Tail, Valid, [{Txn, InvalidReason} | Invalid], PType, PBuf, Chain);
+                        {error, InvalidReason} = Error->
+                            lager:warning("invalid txn while absorbing ~p : ~p / ~s", [Type, Error, print(Txn)]),
+                            validate2(Tail, Valid, [{Txn, InvalidReason} | Invalid], PType, PBuf, Chain)
+                    end;
+                {error, {bad_nonce, {_NonceType, Nonce, LedgerNonce}}} when Nonce > LedgerNonce + 1 ->
+                    %% we don't have enough context to decide if this transaction is valid yet, keep it
+                    %% but don't include it in the block (so it stays in the buffer)
+                    validate2(Tail, Valid, Invalid, PType, PBuf, Chain);
+                {error, {InvalidReason, _Details}} = Error ->
+                    lager:warning("invalid txn ~p : ~p / ~s", [Type, Error, print(Txn)]),
+                    %% any other error means we drop it
+                    validate2(Tail, Valid, [{Txn, InvalidReason} | Invalid], PType, PBuf, Chain);
+                {error, InvalidReason}=Error when is_atom(InvalidReason) ->
+                    lager:warning("invalid txn ~p : ~p / ~s", [Type, Error, print(Txn)]),
+                    %% any other error means we drop it
+                    validate2(Tail, Valid, [{Txn, InvalidReason} | Invalid], PType, PBuf, Chain);
+                Error ->
+                    lager:warning("invalid txn ~p : ~p / ~s", [Type, Error, print(Txn)]),
+                    %% any other error means we drop it
+                    %% this error is unexpected and could be a crash report or some other weirdness
+                    %% we will use a generic error reason
+                    validate2(Tail, Valid, [{Txn, validation_failed} | Invalid], PType, PBuf, Chain)
+            end;
+        _Else ->
+            Res = blockchain_utils:pmap(
+                    fun(T) ->
+                            Start = erlang:monotonic_time(millisecond),
+                            Ty = ?MODULE:type(T),
+                            Ret = (catch Ty:is_valid(T, Chain)),
+                            maybe_log_duration(Ty, Start),
+                            {T, Ret}
+                    end, lists:reverse(PBuf)),
+            {Valid1, Invalid1} = separate_res(Res, Chain, Valid, Invalid),
+            validate2(Txns, Valid1, Invalid1, undefined, [], Chain)
+    end.
+
 separate_res([], _Chain, V, I) ->
     {V, I};
 separate_res([{T, ok} | Rest], Chain, V, I) ->
@@ -485,7 +573,7 @@ absorb_and_commit2(Block, Chain0, BeforeCommit, Rescue) ->
     Transactions = lists:sort(fun sort/2, (Transactions0)),
     Start = erlang:monotonic_time(millisecond),
     lager:info("################ ==3 absorb_and_commit2 before validate"),
-    case ?MODULE:validate(Transactions, Chain1, Rescue) of
+    case ?MODULE:validate2(Transactions, Chain1, Rescue) of
         {_ValidTxns, []} ->
             End = erlang:monotonic_time(millisecond),
             lager:info("################ ==3 absorb_and_commit2 before absorb_block"),
@@ -664,13 +752,37 @@ absorb_block(Block, Rescue, Chain) ->
 absorb(Txn, Chain) ->
     Type = ?MODULE:type(Txn),
     Start = erlang:monotonic_time(millisecond),
-
     try Type:absorb(Txn, Chain) of
         {error, _Reason}=Error ->
             lager:info("failed to absorb ~p ~p ~s",
                        [Type, _Reason, ?MODULE:print(Txn)]),
             Error;
         ok ->
+            End = erlang:monotonic_time(millisecond),
+            Slow = application:get_env(blockchain, slow_txn_log_threshold, 25), % in ms
+            case (End - Start) >= Slow of
+                true ->
+                    lager:info("took ~p ms to absorb ~p", [End - Start, Type]),
+                    ok;
+                _ -> ok
+            end
+    catch
+        What:Why:Stack ->
+            lager:warning("crash during absorb: ~p ~p", [Why, Stack]),
+            {error, {Type, What, {Why, Stack}}}
+    end.
+
+absorb2(Txn, Chain) ->
+    Type = ?MODULE:type(Txn),
+    Start = erlang:monotonic_time(millisecond),
+    lager:info("################ ==4 absorb before Type:absorb (~p)", [Type]),
+    try Type:absorb(Txn, Chain) of
+        {error, _Reason}=Error ->
+            lager:info("failed to absorb ~p ~p ~s",
+                       [Type, _Reason, ?MODULE:print(Txn)]),
+            Error;
+        ok ->
+            lager:info("################ ==4 absorb after Type:absorb (~p)", [Type]),
             End = erlang:monotonic_time(millisecond),
             Slow = application:get_env(blockchain, slow_txn_log_threshold, 25), % in ms
             case (End - Start) >= Slow of
