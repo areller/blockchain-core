@@ -1319,8 +1319,8 @@ add_block2_(Block, Blockchain, Syncing) ->
                                    end,
                     {Signers, _Signatures} = lists:unzip(Sigs),
                     Fun = case lists:member(MyAddress, Signers) orelse FollowMode of
-                              true -> unvalidated_absorb_and_commit;
-                              _ -> absorb_and_commit
+                              true -> unvalidated_absorb_and_commit2;
+                              _ -> absorb_and_commit2
                           end,
                     %% 0 can never be true below
                     SnapHeight = application:get_env(blockchain, blessed_snapshot_block_height, 0),
