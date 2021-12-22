@@ -24,6 +24,7 @@
     fee/1,
     fee_payer/2,
     is_valid/2,
+    is_valid2/2,
     absorb/2,
     print/1,
     json_type/0,
@@ -195,6 +196,110 @@ is_valid(Txn, Chain) ->
                             {error, _} = VerifyErr -> throw(VerifyErr)
                         end;
                     _ ->
+                        throw({error, {election_too_early, {TxnHeight,
+                                       LastElectionHeight + ElectionInterval}}})
+                end
+        end
+    catch throw:E ->
+            E
+    end.
+
+is_valid2(Txn, Chain) ->
+    lager:info("################ ==5 enter is_valid2"),
+    Ledger = blockchain:ledger(Chain),
+    Members = ?MODULE:members(Txn),
+    Delay = ?MODULE:delay(Txn),
+    Proof0 = ?MODULE:proof(Txn),
+    lager:info("################ ==5 enter2 is_valid2"),
+    try
+        case Members of
+            [] ->
+                throw({error, no_members});
+            _ ->
+                ok
+        end,
+        TxnHeight = ?MODULE:height(Txn),
+        lager:info("################ ==5 is_valid2 before current_height"),
+        case blockchain_ledger_v1:current_height(Ledger) of
+            %% no chain, genesis block
+            {ok, 0} ->
+                lager:info("################ ==5 is_valid2 current_height: ok.1"),
+                ok;
+            {ok, CurrHeight} ->
+                lager:info("################ ==5 is_valid2 before get_block_info"),
+                {ok, #block_info_v2{election_info={_, LastElectionHeight}}} = blockchain:get_block_info(CurrHeight, Chain),
+
+                lager:info("################ ==5 is_valid2 before election_height"),
+                case blockchain_ledger_v1:election_height(Ledger) of
+                    %% no chain, genesis block
+                    {error, not_found} ->
+                        lager:info("################ ==5 is_valid2 election_height: ok.1"),
+                        ok;
+                    {ok, BaseHeight} when TxnHeight > BaseHeight ->
+                        lager:info("################ ==5 is_valid2 election_height: ok.2"),
+                        ok;
+                    {ok, BaseHeight} ->
+                        lager:info("################ ==5 is_valid2 election_height: ok."),
+                        throw({error, {duplicate_group, {?MODULE:height(Txn), BaseHeight}}})
+                end,
+                {ok, ElectionInterval} = blockchain:config(?election_interval, Ledger),
+                %% The next election should be at least ElectionInterval blocks past the last election
+                %% This check prevents elections ahead of schedule
+                case TxnHeight >= LastElectionHeight + ElectionInterval of
+                    true ->
+                        lager:info("################ ==5 is_valid2 before binary_to_term"),
+                        Proof = binary_to_term(Proof0),
+                        EffectiveHeight = LastElectionHeight + ElectionInterval + Delay,
+                        lager:info("################ ==5 is_valid2 after binary_to_term"),
+                        {ok, Block} = blockchain:get_block(EffectiveHeight, Chain),
+                        lager:info("################ ==5 is_valid2 after get_block.0"),
+                        {ok, RestartInterval} = blockchain:config(?election_restart_interval, Ledger),
+                        IntervalRange =
+                            case blockchain:config(?election_restart_interval_range, Ledger) of
+                                {ok, IR} -> IR;
+                                _ -> 1
+                            end,
+                        %% The next election should occur within RestartInterval blocks of when the election started
+                        NextRestart = LastElectionHeight + ElectionInterval + Delay +
+                            (RestartInterval * IntervalRange),
+                        case CurrHeight > NextRestart of
+                            true ->
+                                throw({error, {txn_too_old, {CurrHeight, NextRestart}}});
+                            _ ->
+                                ok
+                        end,
+                        {ok, N} = blockchain:config(?num_consensus_members, Ledger),
+                        case length(Members) == N of
+                            true -> ok;
+                            _ -> throw({error, {wrong_members_size, {N, length(Members)}}})
+                        end,
+                        %% if we're on validators make sure that everyone is staked
+                        case blockchain_ledger_v1:config(?election_version, Ledger) of
+                            {ok, N} when N >= 5 ->
+                                case lists:all(fun(M) ->
+                                                       {ok, V} = blockchain_ledger_v1:get_validator(M, Ledger),
+                                                       blockchain_ledger_validator_v1:status(V) == staked end,
+                                               Members) of
+                                    true -> ok;
+                                    false -> throw({error, not_all_validators_staked})
+                                end;
+                            _ -> ok
+                        end,
+                        lager:info("################ ==5 is_valid2 before hash_block.0"),
+                        Hash = blockchain_block:hash_block(Block),
+                        lager:info("################ ==5 is_valid2 before ledger_at.0"),
+                        {ok, OldLedger} = blockchain:ledger_at(EffectiveHeight, Chain),
+                        lager:info("################ ==5 is_valid2 before verify_proof.0"),
+                        case verify_proof(Proof, Members, Hash, Delay, OldLedger) of
+                            ok -> 
+                                lager:info("################ ==5 is_valid2 after verify_proof.0"),
+                                ok;
+                            {error, _} = VerifyErr -> 
+                                lager:info("################ ==5 is_valid2 after verify_proof.1"),
+                                throw(VerifyErr)
+                        end;
+                    _ ->
+                        lager:info("################ ==5 is_valid2 before throw.0"),
                         throw({error, {election_too_early, {TxnHeight,
                                        LastElectionHeight + ElectionInterval}}})
                 end
