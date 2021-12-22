@@ -357,16 +357,20 @@ validate2(Transactions, _Chain, true) ->
     {Transactions, []};
 validate2(Transactions, Chain0, false) ->
     Ledger0 = blockchain:ledger(Chain0),
+    lager:info("################ ==4 validate2.0 before new_context"),
     Ledger1 = blockchain_ledger_v1:new_context(Ledger0),
+    lager:info("################ ==4 validate2.0 after new_context"),
     Chain1 = blockchain:ledger(Ledger1, Chain0),
     validate2(Transactions, [], [], undefined, [], Chain1).
 
 validate2([], Valid, Invalid, PType, PBuf, Chain) ->
+    lager:info("################ ==4 enter validate2.1"),
     {Valid1, Invalid1} =
         case PType of
             undefined ->
                 {Valid, Invalid};
             _ ->
+                lager:info("################ ==4 validate2.1 before pmap"),
                 Res = blockchain_utils:pmap(
                         fun(T) ->
                                 Start = erlang:monotonic_time(millisecond),
@@ -375,10 +379,13 @@ validate2([], Valid, Invalid, PType, PBuf, Chain) ->
                                 maybe_log_duration(Type, Start),
                                 {T, Ret}
                         end, lists:reverse(PBuf)),
+                lager:info("################ ==4 validate2.1 before separate_res"),
                 separate_res(Res, Chain, Valid, Invalid)
         end,
     Ledger = blockchain:ledger(Chain),
+    lager:info("################ ==4 validate2.1 before delete_context"),
     blockchain_ledger_v1:delete_context(Ledger),
+    lager:info("################ ==4 validate2.1 after delete_context"),
     lager:info("valid: ~p, invalid: ~p", [types(Valid1), types(Invalid1)]),
     {lists:reverse(Valid1), Invalid1};
 validate2([Txn | Tail] = Txns, Valid, Invalid, PType, PBuf, Chain) ->
