@@ -435,9 +435,9 @@ calculate_rewards_metadata2(Start, End, Chain) ->
         %% so we will do that top level work here. If we get a thrown error while
         %% we are folding, we will abort reward calculation.
         lager:info("################ ==6 blockchain_txn_rewards_v2 calculate_rewards_metadata2 before fold_blocks_for_rewards"), 
-        Results0 = fold_blocks_for_rewards(Start, End, Chain,
+        Results0 = fold_blocks_for_rewards2(Start, End, Chain,
                                            Vars, Ledger, AccInit),
-                                           lager:info("################ ==6 blockchain_txn_rewards_v2 calculate_rewards_metadata2 after fold_blocks_for_rewards"), 
+        lager:info("################ ==6 blockchain_txn_rewards_v2 calculate_rewards_metadata2 after fold_blocks_for_rewards"), 
 
         %% Prior to HIP 28 (reward_version <6), force EpochReward amount for the CG to always
         %% be around ElectionInterval (30 blocks) so that there is less incentive
@@ -579,6 +579,28 @@ fold_blocks_for_rewards(Current, End, Chain, Vars, Ledger, Acc) ->
                                  end,
                                  Acc, Txns),
             fold_blocks_for_rewards(Current+1, End, Chain, Vars, Ledger, NewAcc)
+    end.
+
+fold_blocks_for_rewards2(Current, End, _Chain, _Vars, _Ledger, Acc) when Current == End + 1 -> Acc;
+fold_blocks_for_rewards2(910360, End, Chain, Vars, Ledger, Acc) ->
+    fold_blocks_for_rewards2(910361, End, Chain, Vars, Ledger, Acc);
+fold_blocks_for_rewards2(Current, End, Chain, Vars, Ledger, Acc) ->
+    lager:info("################ ==6 blockchain_txn_rewards_v2 fold_blocks_for_rewards2 before get_block"), 
+    case blockchain:get_block(Current, Chain) of
+        {error, _Reason} = Error -> 
+            lager:info("################ ==6 blockchain_txn_rewards_v2 fold_blocks_for_rewards2 after get_block.0"), 
+            throw(Error);
+        {ok, Block} ->
+            lager:info("################ ==6 blockchain_txn_rewards_v2 fold_blocks_for_rewards2 before transactions"), 
+            Txns = blockchain_block:transactions(Block),
+            lager:info("################ ==6 blockchain_txn_rewards_v2 fold_blocks_for_rewards2 after transactions"), 
+            NewAcc = lists:foldl(fun(T, A) ->
+                                         calculate_reward_for_txn(blockchain_txn:type(T), T, End,
+                                                                  A, Chain, Ledger, Vars)
+                                 end,
+                                 Acc, Txns),
+            lager:info("################ ==6 blockchain_txn_rewards_v2 fold_blocks_for_rewards2 after foldl"), 
+            fold_blocks_for_rewards2(Current+1, End, Chain, Vars, Ledger, NewAcc)
     end.
 
 -spec calculate_reward_for_txn( Type :: atom(),
