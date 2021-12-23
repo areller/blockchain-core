@@ -32,6 +32,7 @@
          signature/1,
          sign/2,
          is_valid/2,
+         is_valid2/2,
          absorb/2,
          print/1,
          json_type/0,
@@ -127,6 +128,20 @@ calculate_fee(Txn, Ledger, DCPayloadSize, TxnFeeMultiplier, true) ->
 
 -spec is_valid(txn_payment_v2(), blockchain:blockchain()) -> ok | {error, any()}.
 is_valid(Txn, Chain) ->
+    Ledger = blockchain:ledger(Chain),
+    case blockchain:config(?max_payments, Ledger) of
+        {ok, M} when is_integer(M) ->
+            case blockchain_txn:validate_fields([{{payee, P}, {address, libp2p}} || P <- ?MODULE:payees(Txn)]) of
+                ok ->
+                    do_is_valid_checks(Txn, Chain, M);
+                Error ->
+                    Error
+            end;
+        _ ->
+            {error, {invalid, max_payments_not_set}}
+    end.
+
+is_valid2(Txn, Chain) ->
     Ledger = blockchain:ledger(Chain),
     case blockchain:config(?max_payments, Ledger) of
         {ok, M} when is_integer(M) ->

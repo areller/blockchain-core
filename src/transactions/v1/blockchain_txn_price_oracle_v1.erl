@@ -29,6 +29,7 @@
     fee_payer/2,
     sign/2,
     is_valid/2,
+    is_valid2/2,
     absorb/2,
     print/1,
     json_type/0,
@@ -154,6 +155,39 @@ sign(Txn, SigFun) ->
 %%--------------------------------------------------------------------
 -spec is_valid(txn_price_oracle(), blockchain:blockchain()) -> ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    Ledger = blockchain:ledger(Chain),
+    Price = ?MODULE:price(Txn),
+    Signature = ?MODULE:signature(Txn),
+    RawTxnPK = ?MODULE:public_key(Txn),
+    TxnPK = libp2p_crypto:bin_to_pubkey(RawTxnPK),
+    BlockHeight = ?MODULE:block_height(Txn),
+    {ok, LedgerHeight} = blockchain_ledger_v1:current_height(Ledger),
+    BaseTxn = Txn#blockchain_txn_price_oracle_v1_pb{signature = <<>>},
+    EncodedTxn = blockchain_txn_price_oracle_v1_pb:encode_msg(BaseTxn),
+    {ok, RawOracleKeys} = blockchain:config(?price_oracle_public_keys, Ledger),
+    {ok, MaxHeight} = blockchain:config(?price_oracle_height_delta, Ledger),
+    OracleKeys = blockchain_utils:bin_keys_to_list(RawOracleKeys),
+
+    case blockchain_txn:validate_fields([{{oracle_public_key, RawTxnPK}, {member, OracleKeys}},
+                                         {{price, Price}, {is_integer, 0}}]) of
+        ok ->
+            case libp2p_crypto:verify(EncodedTxn, Signature, TxnPK) of
+                false ->
+                    {error, bad_signature};
+                true ->
+                    case validate_block_height(RawTxnPK, BlockHeight,
+                                               LedgerHeight, MaxHeight, Ledger) of
+                        false ->
+                            {error, bad_block_height};
+                        true ->
+                            ok
+                    end
+            end;
+        Error ->
+            Error
+    end.
+
+is_valid2(Txn, Chain) ->
     Ledger = blockchain:ledger(Chain),
     Price = ?MODULE:price(Txn),
     Signature = ?MODULE:signature(Txn),

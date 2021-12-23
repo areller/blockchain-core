@@ -21,6 +21,7 @@
          fee/1,
          fee_payer/2,
          is_valid/2,
+         is_valid2/2,
          master_key/1,
          multi_keys/1,
          key_proof/1, key_proof/2,
@@ -243,6 +244,118 @@ nonce(Txn) ->
 
 -spec is_valid(txn_vars(), blockchain:blockchain()) -> ok | {error, any()}.
 is_valid(Txn, Chain) ->
+    Ledger = blockchain:ledger(Chain),
+    Gen =
+        case blockchain_ledger_v1:current_height(Ledger) of
+            {ok, 0} ->
+                true;
+            _ ->
+                false
+        end,
+    Vars = decode_vars(vars(Txn)),
+    Version =
+        case blockchain:config(?chain_vars_version, Ledger) of
+            {ok, 2} ->
+                2;
+            {error, not_found} when Gen == true ->
+                %% if this isn't on the ledger, allow the contents of
+                %% the genesis block to choose the validation type
+                maps:get(?chain_vars_version, Vars, 1);
+            _ ->
+                1
+        end,
+
+    case Version of
+        2 ->
+            Artifact = create_artifact(Txn),
+            lager:debug("validating vars ~p artifact ~p", [Vars, Artifact]),
+            try
+                Nonce = nonce(Txn),
+                case blockchain_ledger_v1:vars_nonce(Ledger) of
+                    {ok, LedgerNonce} when Nonce == (LedgerNonce + 1) ->
+                        ok;
+                    {error, not_found} when Gen == true ->
+                        ok;
+                    {error, not_found} ->
+                        throw({error, missing_ledger_nonce});
+                    {ok, LedgerNonce} ->
+                        throw({error, bad_nonce, {exp, (LedgerNonce + 1), {got, Nonce}}})
+                end,
+
+                case Gen of
+                    true -> ok; %% genesis block doesn't validate vars
+                    _ ->
+                        %% do these before the proof, so we can check validation on unsigned txns
+                        %% NB: validation errors MUST throw
+                        maps:map(fun validate_var/2, Vars)
+                end,
+                lists:foreach(
+                  fun(VarName) ->
+                          case blockchain:config(VarName, Ledger) of % ignore this one using "?"
+                              {ok, _} -> ok;
+                              {error, not_found} -> throw({error, {unset_var_not_set, VarName}})
+                          end
+                  end,
+                  decode_unsets(unsets(Txn))),
+
+                %% here we can accept a valid master key
+                ok = validate_master_keys(Txn, Gen, Artifact, Ledger),
+                case Gen of
+                    true ->
+                        %% genesis block requires master key and has already
+                        %% validated the proof if it has made it here.
+                        ok;
+                    _ ->
+                        case blockchain:config(?use_multi_keys, Ledger) of
+                            {ok, true} ->
+                                %% handle the case where this gets set before
+                                %% the keys are set
+                                case blockchain_ledger_v1:multi_keys(Ledger) of
+                                    {ok, MultiKeys} ->
+                                        MaxProofs = length(MultiKeys),
+                                        Proofs = multi_proofs(Txn),
+                                        case length(Proofs) > MaxProofs of
+                                            true -> throw({error, too_many_proofs});
+                                            false ->
+                                                case blockchain_utils:verify_multisig(Artifact, Proofs, MultiKeys) of
+                                                    true -> ok;
+                                                    false -> throw({error, insufficient_votes})
+                                                end
+                                        end;
+                                    _ ->
+                                        {ok, MasterKey} = blockchain_ledger_v1:master_key(Ledger),
+                                        case verify_key(Artifact, MasterKey, proof(Txn)) of
+                                            true -> ok;
+                                            _ -> throw({error, bad_block_proof})
+                                        end
+                                end;
+                            _ ->
+                                {ok, MasterKey} = blockchain_ledger_v1:master_key(Ledger),
+                                case verify_key(Artifact, MasterKey, proof(Txn)) of
+                                    true ->
+                                        ok;
+                                    _ ->
+                                        throw({error, bad_block_proof})
+                                end
+                        end
+                end,
+                %% TODO: validate that a cancelled transaction is actually on
+                %% the chain
+
+                %% TODO: figure out how to validate that predicate functions
+                %% actually exist when set, without breaking applications like
+                %% the router and the API that only want to validate vars.
+
+                ok
+            catch throw:Ret ->
+                    lager:error("invalid chain var transaction: ~p reason ~p", [Txn, Ret]),
+                    Ret
+            end;
+        1 ->
+            legacy_is_valid(Txn, Chain)
+    end.
+
+is_valid2(Txn, Chain) ->
     Ledger = blockchain:ledger(Chain),
     Gen =
         case blockchain_ledger_v1:current_height(Ledger) of

@@ -33,6 +33,7 @@
     is_valid_owner/1,
     is_valid_payer/1,
     is_valid/2,
+    is_valid2/2,
     absorb/2,
     calculate_fee/2, calculate_fee/5, calculate_staking_fee/2, calculate_staking_fee/5,
     print/1,
@@ -186,6 +187,17 @@ is_valid_payer(#blockchain_txn_oui_v1_pb{payer=PubKeyBin,
 
 -spec is_valid(txn_oui(), blockchain:blockchain()) -> ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    case {?MODULE:is_valid_owner(Txn),
+          ?MODULE:is_valid_payer(Txn)} of
+        {false, _} ->
+            {error, bad_owner_signature};
+        {_, false} ->
+            {error, bad_payer_signature};
+        {true, true} ->
+            do_oui_validation_checks(Txn, Chain)
+    end.
+
+is_valid2(Txn, Chain) ->
     case {?MODULE:is_valid_owner(Txn),
           ?MODULE:is_valid_payer(Txn)} of
         {false, _} ->

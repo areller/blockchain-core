@@ -21,6 +21,7 @@
     fee/1,
     fee_payer/2,
     is_valid/2,
+    is_valid2/2,
     absorb/2,
     sign/2,
     print/1,
@@ -95,6 +96,21 @@ fee_payer(_Txn, _Ledger) ->
 %%--------------------------------------------------------------------
 -spec is_valid(txn_coinbase(), blockchain:blockchain()) -> ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    Ledger = blockchain:ledger(Chain),
+    case blockchain_ledger_v1:current_height(Ledger) of
+        {ok, 0} ->
+            Amount = ?MODULE:amount(Txn),
+            case Amount > 0 of
+                true ->
+                    ok;
+                false ->
+                    {error, zero_or_negative_amount}
+            end;
+        _ ->
+            {error, not_in_genesis_block}
+    end.
+
+is_valid2(Txn, Chain) ->
     Ledger = blockchain:ledger(Chain),
     case blockchain_ledger_v1:current_height(Ledger) of
         {ok, 0} ->

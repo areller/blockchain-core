@@ -29,6 +29,7 @@
     fee_payer/2,
     sign/2,
     is_valid/2,
+    is_valid2/2,
     absorb/2,
     print/1,
     json_type/0,
@@ -147,6 +148,74 @@ sign(Txn0, SigFun) ->
 %%--------------------------------------------------------------------
 -spec is_valid(txn_poc_request(), blockchain:blockchain()) -> ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    Ledger = blockchain:ledger(Chain),
+    Challenger = ?MODULE:challenger(Txn),
+    ChallengerSignature = ?MODULE:signature(Txn),
+    PubKey = libp2p_crypto:bin_to_pubkey(Challenger),
+    BaseTxn = Txn#blockchain_txn_poc_request_v1_pb{signature = <<>>},
+    EncodedTxn = blockchain_txn_poc_request_v1_pb:encode_msg(BaseTxn),
+
+    case blockchain_txn:validate_fields([{{secret_hash, ?MODULE:secret_hash(Txn)}, {binary, 32}},
+                                         {{onion_key_hash, ?MODULE:secret_hash(Txn)}, {binary, 32}},
+                                         {{block_hash, ?MODULE:secret_hash(Txn)}, {binary, 32}}]) of
+        ok ->
+            case libp2p_crypto:verify(EncodedTxn, ChallengerSignature, PubKey) of
+                false ->
+                    {error, bad_signature};
+                true ->
+                    StartFind = maybe_start_duration(),
+                    case blockchain_ledger_v1:find_gateway_info(Challenger, Ledger) of
+                        {error, not_found} ->
+                            {error, missing_gateway};
+                        {error, _Reason}=Error ->
+                            Error;
+                        {ok, Info} ->
+                            StartCap = maybe_log_duration(fetch_gw, StartFind),
+                            %% check the gateway mode to determine if its allowed to issue POC requests
+                            Mode = blockchain_ledger_gateway_v2:mode(Info),
+                            case blockchain_ledger_gateway_v2:is_valid_capability(Mode, ?GW_CAPABILITY_POC_CHALLENGER, Ledger) of
+                                false -> {error, {gateway_not_allowed, blockchain_ledger_gateway_v2:mode(Info)}};
+                                true ->
+                                    StartRest = maybe_log_duration(check_cap, StartCap),
+                                    case blockchain_ledger_gateway_v2:location(Info) of
+                                        undefined ->
+                                            lager:info("no loc for challenger: ~p ~p", [Challenger, Info]),
+                                            {error, no_gateway_location};
+                                        _Location ->
+                                            {ok, Height} = blockchain_ledger_v1:current_height(Ledger),
+                                            LastChallenge = blockchain_ledger_gateway_v2:last_poc_challenge(Info),
+                                            PoCInterval = blockchain_utils:challenge_interval(Ledger),
+                                            case LastChallenge == undefined orelse LastChallenge =< (Height+1  - PoCInterval) of
+                                                false ->
+                                                    {error, too_many_challenges};
+                                                true ->
+                                                    BlockHash = ?MODULE:block_hash(Txn),
+                                                    case blockchain:get_block_height(BlockHash, Chain) of
+                                                        {error, not_found} ->
+                                                            {error, missing_challenge_block_hash};
+                                                        {error, _}=Error ->
+                                                            Error;
+                                                        {ok, BlockHeight} ->
+                                                            case (BlockHeight + PoCInterval) > (Height+1) of
+                                                                false ->
+                                                                    {error, replaying_request};
+                                                                true ->
+                                                                    Fee = ?MODULE:fee(Txn),
+                                                                    Owner = blockchain_ledger_gateway_v2:owner_address(Info),
+                                                                    R = blockchain_ledger_v1:check_dc_balance(Owner, Fee, Ledger),
+                                                                    maybe_log_duration(rest, StartRest),
+                                                                    R
+                                                            end
+                                                    end
+                                            end
+                                    end
+                            end
+                    end
+            end;
+        Error -> Error
+    end.
+
+is_valid2(Txn, Chain) ->
     Ledger = blockchain:ledger(Chain),
     Challenger = ?MODULE:challenger(Txn),
     ChallengerSignature = ?MODULE:signature(Txn),

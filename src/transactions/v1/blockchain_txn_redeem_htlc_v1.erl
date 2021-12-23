@@ -26,6 +26,7 @@
     signature/1,
     sign/2,
     is_valid/2,
+    is_valid2/2,
     absorb/2,
     print/1,
     json_type/0,
@@ -117,6 +118,83 @@ calculate_fee(Txn, Ledger, DCPayloadSize, TxnFeeMultiplier, true) ->
 %%--------------------------------------------------------------------
 -spec is_valid(txn_redeem_htlc(), blockchain:blockchain()) -> ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    Ledger = blockchain:ledger(Chain),
+    Redeemer = ?MODULE:payee(Txn),
+    Signature = ?MODULE:signature(Txn),
+    PubKey = libp2p_crypto:bin_to_pubkey(Redeemer),
+    BaseTxn = Txn#blockchain_txn_redeem_htlc_v1_pb{signature = <<>>},
+    EncodedTxn = blockchain_txn_redeem_htlc_v1_pb:encode_msg(BaseTxn),
+    FieldValidation = case blockchain:config(?txn_field_validation_version, Ledger) of
+                          {ok, 1} ->
+                              [{{payee, Redeemer}, {address, libp2p}},
+                               {{preimage, ?MODULE:preimage(Txn)}, {binary, 32}},
+                               {{address, ?MODULE:address(Txn)}, {address, libp2p}}];
+                          _ ->
+                              [{{payee, Redeemer}, {address, libp2p}},
+                               {{preimage, ?MODULE:preimage(Txn)}, {binary, 1, 32}},
+                               {{address, ?MODULE:address(Txn)}, {binary, 32, 33}}]
+                      end,
+    case blockchain_txn:validate_fields(FieldValidation) of
+        ok ->
+            case libp2p_crypto:verify(EncodedTxn, Signature, PubKey) of
+                false ->
+                    {error, bad_signature};
+                true ->
+                    TxnFee = ?MODULE:fee(Txn),
+                    Address = ?MODULE:address(Txn),
+                    case blockchain_ledger_v1:find_htlc(Address, Ledger) of
+                        {error, _}=Error ->
+                            Error;
+                        {ok, HTLC} ->
+                            AreFeesEnabled = blockchain_ledger_v1:txn_fees_active(Ledger),
+                            ExpectedTxnFee = ?MODULE:calculate_fee(Txn, Chain),
+                            case ExpectedTxnFee =< TxnFee orelse not AreFeesEnabled of
+                                false ->
+                                    {error, {wrong_txn_fee, {ExpectedTxnFee, TxnFee}}};
+                                true ->
+                                    case blockchain_ledger_v1:check_dc_or_hnt_balance(Redeemer, TxnFee, Ledger, AreFeesEnabled) of
+                                        {error, _Reason}=Error ->
+                                            Error;
+                                        ok ->
+                                            Payer = blockchain_ledger_htlc_v1:payer(HTLC),
+                                            Payee = blockchain_ledger_htlc_v1:payee(HTLC),
+                                            %% if the Creator of the HTLC is not the redeemer, continue to check for pre-image
+                                            %% otherwise check that the timelock has expired which allows the Creator to redeem
+                                            case Payer =:= Redeemer of
+                                                false ->
+                                                    %% check that the address trying to redeem matches the HTLC
+                                                    case Redeemer =:= Payee of
+                                                        true ->
+                                                            Hashlock = blockchain_ledger_htlc_v1:hashlock(HTLC),
+                                                            Preimage = ?MODULE:preimage(Txn),
+                                                            case (crypto:hash(sha256, Preimage) =:= Hashlock) of
+                                                                true ->
+                                                                    ok;
+                                                                false ->
+                                                                    {error, invalid_preimage}
+                                                            end;
+                                                        false ->
+                                                            {error, invalid_payee}
+                                                    end;
+                                                true ->
+                                                    Timelock = blockchain_ledger_htlc_v1:timelock(HTLC),
+                                                    {ok, Height} = blockchain_ledger_v1:current_height(Ledger),
+                                                    case Timelock >= (Height+1) of
+                                                        true ->
+                                                            {error, timelock_not_expired};
+                                                        false ->
+                                                            ok
+                                                    end
+                                            end
+                                    end
+                            end
+                    end
+            end;
+        Error ->
+            Error
+    end.
+
+is_valid2(Txn, Chain) ->
     Ledger = blockchain:ledger(Chain),
     Redeemer = ?MODULE:payee(Txn),
     Signature = ?MODULE:signature(Txn),

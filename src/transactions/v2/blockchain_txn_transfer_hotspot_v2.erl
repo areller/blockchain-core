@@ -25,6 +25,7 @@
     hash/1,
     sign/2,
     is_valid/2,
+    is_valid2/2,
     is_valid_owner/1,
     absorb/2,
     print/1,
@@ -143,6 +144,16 @@ is_valid_owner(
 
 -spec is_valid(txn_transfer_hotspot_v2(), blockchain:blockchain()) -> ok | {error, any()}.
 is_valid(Txn, Chain) ->
+    Ledger = blockchain:ledger(Chain),
+
+    case blockchain:config(?transaction_validity_version, Ledger) of
+        {ok, 2} ->
+            is_valid_conditions(Txn, Ledger, Chain);
+        _ ->
+            {error, transaction_validity_version_not_set}
+    end.
+
+is_valid2(Txn, Chain) ->
     Ledger = blockchain:ledger(Chain),
 
     case blockchain:config(?transaction_validity_version, Ledger) of

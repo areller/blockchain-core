@@ -36,6 +36,7 @@
     fee/1,
     fee_payer/2,
     is_valid/2,
+    is_valid2/2,
     absorb/2,
     calculate_rewards/3,
     calculate_rewards_metadata/3,
@@ -123,6 +124,28 @@ fee_payer(_Txn, _Ledger) ->
 
 -spec is_valid(txn_rewards_v2(), blockchain:blockchain()) -> ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    Start = ?MODULE:start_epoch(Txn),
+    End = ?MODULE:end_epoch(Txn),
+    TxnRewards = ?MODULE:rewards(Txn),
+    %% TODO: REMOVE THIS ENTIRE CASE STATEMENT AT NEXT RESTART
+    case TxnRewards of
+        [] ->
+            ok;
+        _ ->
+            case ?MODULE:calculate_rewards(Start, End, Chain) of
+                {error, _Reason}=Error ->
+                    Error;
+                {ok, CalRewards} ->
+                    CalRewardsHashes = [hash(R)|| R <- CalRewards],
+                    TxnRewardsHashes = [hash(R)|| R <- TxnRewards],
+                    case CalRewardsHashes == TxnRewardsHashes of
+                        false -> {error, invalid_rewards_v2};
+                        true -> ok
+                    end
+            end
+    end.
+
+is_valid2(Txn, Chain) ->
     Start = ?MODULE:start_epoch(Txn),
     End = ?MODULE:end_epoch(Txn),
     TxnRewards = ?MODULE:rewards(Txn),

@@ -30,6 +30,7 @@
          sign/2,
          new_owner_sign/2,
          is_valid/2,
+         is_valid2/2,
          absorb/2,
          print/1,
          json_type/0,
@@ -175,6 +176,112 @@ is_valid_old_owner(#blockchain_txn_transfer_validator_stake_v1_pb{
 -spec is_valid(txn_transfer_validator_stake(), blockchain:blockchain()) ->
           ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    Ledger = blockchain:ledger(Chain),
+    NewValidator = new_validator(Txn),
+    OldValidator = old_validator(Txn),
+    Fee = fee(Txn),
+    case is_valid_old_owner(Txn) of
+        false ->
+            {error, bad_old_owner_signature};
+        true ->
+            try
+                case blockchain:config(?validator_version, Ledger) of
+                    {ok, Vers} when Vers >= 3 ->
+                        ok;
+                    _ -> throw(unsupported_txn)
+                end,
+                case new_owner(Txn) /= <<>> of
+                    true ->
+                        case is_valid_new_owner(Txn) of
+                            true ->
+                                %% make sure that no one is re-using miner keys
+                                case blockchain_ledger_v1:find_gateway_info(NewValidator, Ledger) of
+                                    {ok, _} -> throw(reused_miner_key);
+                                    {error, not_found} -> ok
+                                end;
+                            false ->
+                                throw(bad_new_owner_signature)
+                        end;
+                    _ ->
+                        %% no new owner just means this is an in-account transfer
+                        ok
+                end,
+                %% check that the network is correct for the new validator pubkey_bin
+                case blockchain:config(?validator_key_check, Ledger) of
+                    %% assert that validator is on the right network by decoding its key
+                    {ok, true} ->
+                        try
+                            libp2p_crypto:bin_to_pubkey(NewValidator),
+                            ok
+                        catch throw:Why ->
+                                  throw({unusable_miner_key, Why})
+                        end;
+                    _ -> ok
+                end,
+                %% check if the old validator currently in the group
+                {ok, ConsensusAddrs} = blockchain_ledger_v1:consensus_members(Ledger),
+                case lists:member(OldValidator, ConsensusAddrs) of
+                    true -> throw(cannot_transfer_while_in_consensus);
+                    false -> ok
+                end,
+                %% make sure the amount is encoded correctly
+                %% and is only specified in the correct case
+                case payment_amount(Txn) of
+                    %% 0 is always ok
+                    0 -> ok;
+                    N when is_integer(N) andalso N >= 0 ->
+                        case new_owner(Txn) /= <<>> of
+                            true -> ok;
+                            false -> throw(amount_set_for_intra_account_transfer)
+                        end;
+                    N -> throw({bad_amount, N})
+                end,
+                %% check fee
+                AreFeesEnabled = blockchain_ledger_v1:txn_fees_active(Ledger),
+                ExpectedTxnFee = calculate_fee(Txn, Chain),
+                case ExpectedTxnFee =< Fee orelse not AreFeesEnabled of
+                    false -> throw({wrong_txn_fee, {ExpectedTxnFee, Fee}});
+                    true -> ok
+                end,
+                %% make sure that this validator doesn't already exist
+                case blockchain_ledger_v1:get_validator(NewValidator, Ledger) of
+                    {ok, _} -> throw(new_validator_already_exists);
+                    {error, not_found} -> ok;
+                    {error, Reason} -> throw({new_validator_fetch_error, Reason})
+                end,
+                %% make sure that existing validator exists and is staked
+                case blockchain_ledger_v1:get_validator(OldValidator, Ledger) of
+                    {ok, OV} ->
+                        OldOwner = old_owner(Txn),
+                        case blockchain_ledger_validator_v1:owner_address(OV) of
+                            OldOwner ->
+                                %% check staked status
+                                case blockchain_ledger_validator_v1:status(OV) of
+                                    staked -> ok;
+                                    %% can be either unstaked or cooldown
+                                    _ -> throw(cant_transfer_unstaked_validator)
+                                end,
+                                %% check stake is not 0
+                                case blockchain_ledger_validator_v1:stake(OV) of
+                                    0 -> throw(cant_transfer_zero_stake);
+                                    ChainStake ->
+                                        case stake_amount(Txn) of
+                                            ChainStake -> ok;
+                                            Else -> throw({bad_stake, exp, ChainStake, got, Else})
+                                        end
+                                end;
+                            _ -> throw(bad_owner)
+                        end;
+                    {error, not_found} -> throw(old_validator_non_existant);
+                    {error, Reason1} -> throw({validator_fetch_error, Reason1})
+                end,
+                ok
+            catch throw:Cause ->
+                    {error, Cause}
+            end
+    end.
+
+is_valid2(Txn, Chain) ->
     Ledger = blockchain:ledger(Chain),
     NewValidator = new_validator(Txn),
     OldValidator = old_validator(Txn),

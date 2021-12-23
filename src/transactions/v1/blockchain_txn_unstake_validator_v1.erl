@@ -26,6 +26,7 @@
          fee_payer/2,
          sign/2,
          is_valid/2,
+         is_valid2/2,
          absorb/2,
          print/1,
          json_type/0,
@@ -120,6 +121,73 @@ is_valid_owner(#blockchain_txn_unstake_validator_v1_pb{owner=PubKeyBin,
 -spec is_valid(txn_unstake_validator(), blockchain:blockchain()) ->
           ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    Ledger = blockchain:ledger(Chain),
+    Validator = address(Txn),
+    Owner = owner(Txn),
+    Fee = fee(Txn),
+    StakeReleaseHeight = stake_release_height(Txn),
+    case is_valid_owner(Txn) of
+        false ->
+            {error, bad_owner_signature};
+        _ ->
+            try
+                case blockchain:config(?validator_version, Ledger) of
+                    {ok, Vers} when Vers >= 2 ->
+                        ok;
+                    _ -> throw(unsupported_txn)
+                end,
+                %% check fee
+                AreFeesEnabled = blockchain_ledger_v1:txn_fees_active(Ledger),
+                ExpectedTxnFee = calculate_fee(Txn, Chain),
+                case ExpectedTxnFee =< Fee orelse not AreFeesEnabled of
+                    false -> throw({wrong_txn_fee, {ExpectedTxnFee, Fee}});
+                    true -> ok
+                end,
+                %% check if we're currently in the group
+                {ok, ConsensusAddrs} = blockchain_ledger_v1:consensus_members(Ledger),
+                case lists:member(Validator, ConsensusAddrs) of
+                    true -> throw(cannot_unstake_while_in_consensus);
+                    false -> ok
+                end,
+                %% make sure that this validator exists and is staked
+                case blockchain_ledger_v1:get_validator(Validator, Ledger) of
+                    {ok, V} ->
+                        case blockchain_ledger_validator_v1:status(V) of
+                            staked -> ok;
+                            cooldown -> throw(already_cooldown);
+                            unstaked -> throw(already_unstaked)
+                        end,
+                        ChainStake = blockchain_ledger_validator_v1:stake(V),
+                        case stake_amount(Txn) of
+                            ChainStake -> ok;
+                            Else -> throw({bad_stake, exp, ChainStake, got, Else})
+                        end,
+                        case blockchain_ledger_validator_v1:owner_address(V) of
+                            Owner -> ok;
+                            Other -> throw({not_owner, Other})
+                        end,
+                        {ok, Cooldown} = blockchain:config(?stake_withdrawal_cooldown, Ledger),
+                        {ok, CooldownMax} = blockchain:config(?stake_withdrawal_max, Ledger),
+                        {ok, CurrentHeight} = blockchain_ledger_v1:current_height(Ledger),
+                        %% for more understandable semantics, we need to validate not against the
+                        %% height of the given ledger, but the height of the block that will include
+                        %% this transaction, hence we add one here.
+                        ThisBlockHeight = CurrentHeight + 1,
+                        case StakeReleaseHeight >= (ThisBlockHeight + Cooldown) andalso
+                             StakeReleaseHeight < (ThisBlockHeight + Cooldown + CooldownMax) of
+                            true -> ok;
+                            false -> throw({invalid_stake_release_height, StakeReleaseHeight})
+                        end;
+                    {error, not_found} -> throw(nonexistent_validator);
+                    {error, Reason} -> throw({validator_fetch_error, Reason})
+                end,
+                ok
+            catch throw:Cause ->
+                    {error, Cause}
+            end
+    end.
+
+is_valid2(Txn, Chain) ->
     Ledger = blockchain:ledger(Chain),
     Validator = address(Txn),
     Owner = owner(Txn),

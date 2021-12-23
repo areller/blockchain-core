@@ -23,6 +23,7 @@
     fee/1,
     fee_payer/2,
     is_valid/2,
+    is_valid2/2,
     absorb/2,
     calculate_rewards/3,
     print/1,
@@ -114,6 +115,22 @@ fee_payer(_Txn, _Ledger) ->
 %%--------------------------------------------------------------------
 -spec is_valid(txn_rewards(), blockchain:blockchain()) -> ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    Start = ?MODULE:start_epoch(Txn),
+    End = ?MODULE:end_epoch(Txn),
+    case ?MODULE:calculate_rewards(Start, End, Chain) of
+        {error, _Reason}=Error ->
+            Error;
+        {ok, CalRewards} ->
+            TxnRewards = ?MODULE:rewards(Txn),
+            CalRewardsHashes = lists:sort([blockchain_txn_reward_v1:hash(R)|| R <- CalRewards]),
+            TxnRewardsHashes = lists:sort([blockchain_txn_reward_v1:hash(R)|| R <- TxnRewards]),
+            case CalRewardsHashes == TxnRewardsHashes of
+                false -> {error, invalid_rewards};
+                true -> ok
+            end
+    end.
+
+is_valid2(Txn, Chain) ->
     Start = ?MODULE:start_epoch(Txn),
     End = ?MODULE:end_epoch(Txn),
     case ?MODULE:calculate_rewards(Start, End, Chain) of

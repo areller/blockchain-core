@@ -25,6 +25,7 @@
          fee_payer/2,
          sign/2,
          is_valid/2,
+         is_valid2/2,
          absorb/2,
          print/1,
          json_type/0,
@@ -94,6 +95,47 @@ is_valid_sig(#blockchain_txn_validator_heartbeat_v1_pb{address=PubKeyBin,
 -spec is_valid(txn_validator_heartbeat(), blockchain:blockchain()) ->
           ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    Ledger = blockchain:ledger(Chain),
+    Validator = address(Txn),
+    Version = version(Txn),
+    TxnHeight = height(Txn),
+    {ok, Height} = blockchain_ledger_v1:current_height(Ledger),
+    case is_valid_sig(Txn) of
+        false ->
+            {error, bad_signature};
+        _ ->
+            try
+                case blockchain:config(?validator_version, Ledger) of
+                    {ok, Vers} when Vers >= 1 ->
+                        ok;
+                    _ -> throw(unsupported_txn)
+                end,
+                %% make sure that this validator exists and is staked
+                case blockchain_ledger_v1:get_validator(Validator, Ledger) of
+                    {ok, V} ->
+                        {ok, Interval} = blockchain_ledger_v1:config(?validator_liveness_interval, Ledger),
+                        Status = blockchain_ledger_validator_v1:status(V),
+                        HB = blockchain_ledger_validator_v1:last_heartbeat(V),
+                        case Status == staked
+                            andalso TxnHeight >= (Interval + HB)
+                            andalso TxnHeight =< Height of
+                            true -> ok;
+                            _ -> throw({bad_height, prev, HB, height, Height, got, TxnHeight})
+                        end;
+                    {error, not_found} -> throw(nonexistent_validator);
+                    {error, Reason} -> throw({validator_fetch_error, Reason})
+                end,
+                case valid_version(Version)  of
+                    true -> ok;
+                    false -> throw({bad_version, Version})
+                end,
+                ok
+            catch throw:Cause ->
+                    {error, Cause}
+            end
+    end.
+
+is_valid2(Txn, Chain) ->
     Ledger = blockchain:ledger(Chain),
     Validator = address(Txn),
     Version = version(Txn),

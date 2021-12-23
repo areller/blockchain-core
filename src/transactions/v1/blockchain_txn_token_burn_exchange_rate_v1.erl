@@ -24,6 +24,7 @@
     fee/1,
     fee_payer/2,
     is_valid/2,
+    is_valid2/2,
     absorb/2,
     sign/2,
     print/1,
@@ -90,6 +91,8 @@ fee_payer(_Txn, _Ledger) ->
 %%--------------------------------------------------------------------
 -spec is_valid(txn_token_burn_exchange_rate(), blockchain:blockchain()) -> {error, atom()} | {error, {atom(), any()}}.
 is_valid(_Txn, _Chain) ->
+    {error, not_implemented}.
+is_valid2(_Txn, _Chain) ->
     {error, not_implemented}.
     % Amount = ?MODULE:rate(Txn),
     % case Amount > 0 of

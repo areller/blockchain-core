@@ -29,6 +29,7 @@
     signature/1,
     sign/2,
     is_valid/2,
+    is_valid2/2,
     absorb/2,
     print/1,
     json_type/0,
@@ -133,6 +134,19 @@ calculate_fee(Txn, Ledger, DCPayloadSize, TxnFeeMultiplier, true) ->
 -spec is_valid(Txn :: txn_state_channel_open(),
                Chain :: blockchain:blockchain()) -> ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    Owner = ?MODULE:owner(Txn),
+    Signature = ?MODULE:signature(Txn),
+    PubKey = libp2p_crypto:bin_to_pubkey(Owner),
+    BaseTxn = Txn#blockchain_txn_state_channel_open_v1_pb{signature = <<>>},
+    EncodedTxn = blockchain_txn_state_channel_open_v1_pb:encode_msg(BaseTxn),
+    case libp2p_crypto:verify(EncodedTxn, Signature, PubKey) of
+        false ->
+            {error, bad_signature};
+        true ->
+            do_is_valid_checks(Txn, Chain)
+    end.
+
+is_valid2(Txn, Chain) ->
     Owner = ?MODULE:owner(Txn),
     Signature = ?MODULE:signature(Txn),
     PubKey = libp2p_crypto:bin_to_pubkey(Owner),

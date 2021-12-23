@@ -27,6 +27,7 @@
     signature/1,
     sign/2,
     is_valid/2,
+    is_valid2/2,
     absorb/2,
     print/1,
     json_type/0,
@@ -120,6 +121,76 @@ calculate_fee(Txn, Ledger, DCPayloadSize, TxnFeeMultiplier, true) ->
 
 -spec is_valid(txn_payment(), blockchain:blockchain()) -> ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    Ledger = blockchain:ledger(Chain),
+    Payer = ?MODULE:payer(Txn),
+    Payee = ?MODULE:payee(Txn),
+    Signature = ?MODULE:signature(Txn),
+    PubKey = libp2p_crypto:bin_to_pubkey(Payer),
+    BaseTxn = Txn#blockchain_txn_payment_v1_pb{signature = <<>>},
+    EncodedTxn = blockchain_txn_payment_v1_pb:encode_msg(BaseTxn),
+    case blockchain:config(?deprecate_payment_v1, Ledger) of
+        {ok, true} ->
+            {error, payment_v1_deprecated};
+        _ ->
+            FieldValidation = case blockchain:config(?txn_field_validation_version, Ledger) of
+                                  {ok, 1} ->
+                                      [{{payee, Payee}, {address, libp2p}}];
+                                  _ ->
+                                      [{{payee, Payee}, {binary, 20, 33}}]
+                              end,
+            case blockchain_txn:validate_fields(FieldValidation) of
+                ok ->
+                    case libp2p_crypto:verify(EncodedTxn, Signature, PubKey) of
+                        false ->
+                            {error, bad_signature};
+                        true ->
+                            case blockchain_ledger_v1:find_entry(Payer, Ledger) of
+                                {error, _}=Error0 ->
+                                    Error0;
+                                {ok, Entry} ->
+                                    TxnNonce = ?MODULE:nonce(Txn),
+                                    LedgerNonce = blockchain_ledger_entry_v1:nonce(Entry),
+                                    case TxnNonce =:= LedgerNonce + 1 of
+                                        false ->
+                                            {error, {bad_nonce, {payment, TxnNonce, LedgerNonce}}};
+                                        true ->
+                                            case Payer == Payee of
+                                                false ->
+                                                    Amount = ?MODULE:amount(Txn),
+                                                    TxnFee = ?MODULE:fee(Txn),
+                                                        AmountCheck = case blockchain:config(?allow_zero_amount, Ledger) of
+                                                                          {ok, false} ->
+                                                                              %% check that amount is greater than 0
+                                                                              Amount > 0;
+                                                                          _ ->
+                                                                              %% if undefined or true, use the old check
+                                                                              Amount >= 0
+                                                                      end,
+                                                        case AmountCheck of
+                                                            false ->
+                                                                {error, invalid_transaction};
+                                                            true ->
+                                                                AreFeesEnabled = blockchain_ledger_v1:txn_fees_active(Ledger),
+                                                                ExpectedTxnFee = ?MODULE:calculate_fee(Txn, Chain),
+                                                                case ExpectedTxnFee =< TxnFee orelse not AreFeesEnabled of
+                                                                    false ->
+                                                                        {error, {wrong_txn_fee, {ExpectedTxnFee, TxnFee}}};
+                                                                    true ->
+                                                                        blockchain_ledger_v1:check_dc_or_hnt_balance(Payer, TxnFee, Ledger, AreFeesEnabled)
+                                                                end
+                                                        end;
+                                                true ->
+                                                    {error, invalid_transaction_self_payment}
+                                            end
+                                    end
+                            end
+                    end;
+                Error ->
+                    Error
+            end
+    end.
+
+is_valid2(Txn, Chain) ->
     Ledger = blockchain:ledger(Chain),
     Payer = ?MODULE:payer(Txn),
     Payee = ?MODULE:payee(Txn),

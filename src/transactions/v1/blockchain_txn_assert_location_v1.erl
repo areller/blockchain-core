@@ -36,6 +36,7 @@
     is_valid_location/2,
     is_valid_payer/1,
     is_valid/2,
+    is_valid2/2,
     absorb/2,
     calculate_fee/2, calculate_fee/5, calculate_staking_fee/2, calculate_staking_fee/5,
     print/1,
@@ -308,6 +309,70 @@ is_valid_payer(#blockchain_txn_assert_location_v1_pb{payer=PubKeyBin,
 %%--------------------------------------------------------------------
 -spec is_valid(txn_assert_location(), blockchain:blockchain()) -> ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    Ledger = blockchain:ledger(Chain),
+    case {?MODULE:is_valid_owner(Txn),
+          ?MODULE:is_valid_gateway(Txn),
+          ?MODULE:is_valid_payer(Txn)} of
+        {false, _, _} ->
+            {error, bad_owner_signature};
+        {_, false, _} ->
+            {error, bad_gateway_signature};
+        {_, _, false} ->
+            {error, bad_payer_signature};
+        {true, true, true} ->
+            Owner = ?MODULE:owner(Txn),
+            Nonce = ?MODULE:nonce(Txn),
+            Payer = ?MODULE:payer(Txn),
+            ActualPayer = case Payer == undefined orelse Payer == <<>> of
+                true -> Owner;
+                false -> Payer
+            end,
+            AreFeesEnabled = blockchain_ledger_v1:txn_fees_active(Ledger),
+            StakingFee = ?MODULE:staking_fee(Txn),
+            ExpectedStakingFee = ?MODULE:calculate_staking_fee(Txn, Chain),
+            TxnFee = ?MODULE:fee(Txn),
+            ExpectedTxnFee = calculate_fee(Txn, Chain),
+            case {(ExpectedTxnFee =< TxnFee orelse not AreFeesEnabled), ExpectedStakingFee == StakingFee} of
+                {false,_} ->
+                    {error, {wrong_txn_fee, {ExpectedTxnFee, TxnFee}}};
+                {_,false} ->
+                    {error, {wrong_staking_fee, {ExpectedStakingFee, StakingFee}}};
+                {true, true} ->
+                    case blockchain_ledger_v1:check_dc_or_hnt_balance(ActualPayer, TxnFee + StakingFee, Ledger, AreFeesEnabled) of
+                        {error, _}=Error ->
+                            Error;
+                        ok ->
+                            Gateway = ?MODULE:gateway(Txn),
+                            case blockchain_ledger_v1:find_gateway_info(Gateway, Ledger) of
+                                {error, _} ->
+                                    {error, {unknown_gateway, {Gateway, Ledger}}};
+                                {ok, GwInfo} ->
+                                    GwOwner = blockchain_ledger_gateway_v2:owner_address(GwInfo),
+                                    case Owner == GwOwner of
+                                        false ->
+                                            {error, {bad_owner, {assert_location, Owner, GwOwner}}};
+                                        true ->
+                                            {ok, MinAssertH3Res} = blockchain:config(?min_assert_h3_res, Ledger),
+                                            Location = ?MODULE:location(Txn),
+                                            case ?MODULE:is_valid_location(Txn, MinAssertH3Res) of
+                                                false ->
+                                                    {error, {insufficient_assert_res, {assert_location, Location, Gateway}}};
+                                                true ->
+                                                    LedgerNonce = blockchain_ledger_gateway_v2:nonce(GwInfo),
+                                                    case Nonce =:= LedgerNonce + 1 of
+                                                        false ->
+                                                            {error, {bad_nonce, {assert_location, Nonce, LedgerNonce}}};
+                                                        true ->
+                                                            ok
+                                                    end
+                                            end
+                                    end
+                            end
+                    end
+            end
+    end.
+
+is_valid2(Txn, Chain) ->
     Ledger = blockchain:ledger(Chain),
     case {?MODULE:is_valid_owner(Txn),
           ?MODULE:is_valid_gateway(Txn),

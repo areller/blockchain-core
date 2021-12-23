@@ -20,6 +20,7 @@
     fee/1,
     fee_payer/2,
     is_valid/2,
+    is_valid2/2,
     absorb/2,
     print/1,
     json_type/0,
@@ -90,6 +91,18 @@ fee_payer(_Txn, _Ledger) ->
 %%--------------------------------------------------------------------
 -spec is_valid(txn_genesis_price_oracle(), blockchain:blockchain()) -> ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    Ledger = blockchain:ledger(Chain),
+    Price = price(Txn),
+    case {blockchain_ledger_v1:current_height(Ledger), Price > 0} of
+        {{ok, 0}, true} ->
+            ok;
+        {{ok, 0}, false} ->
+            {error, invalid_oracle_price};
+        _ ->
+            {error, not_in_genesis_block}
+    end.
+
+is_valid2(Txn, Chain) ->
     Ledger = blockchain:ledger(Chain),
     Price = price(Txn),
     case {blockchain_ledger_v1:current_height(Ledger), Price > 0} of

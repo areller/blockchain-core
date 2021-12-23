@@ -25,6 +25,7 @@
          fee_payer/2,
          sign/2,
          is_valid/2,
+         is_valid2/2,
          absorb/2,
          print/1,
          json_type/0,
@@ -120,6 +121,80 @@ is_valid_owner(#blockchain_txn_stake_validator_v1_pb{owner=PubKeyBin,
 -spec is_valid(txn_stake_validator(), blockchain:blockchain()) ->
           ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    Ledger = blockchain:ledger(Chain),
+    Owner = ?MODULE:owner(Txn),
+    Validator = ?MODULE:validator(Txn),
+    Stake = stake(Txn),
+    Fee = fee(Txn),
+    case is_valid_owner(Txn) of
+        false ->
+            {error, bad_owner_signature};
+        true ->
+            try
+                %% explicit activation gate on the stake threshold
+                case blockchain:config(?validator_version, Ledger) of
+                    {ok, Vers} when Vers >= 1 ->
+                        ok;
+                    _ -> throw(unsupported_txn)
+                end,
+                {ok, MinStake} = blockchain:config(?validator_minimum_stake, Ledger),
+                %% check that the network is correct
+                case blockchain:config(?validator_key_check, Ledger) of
+                    %% assert that validator is on the right network by decoding its key
+                    {ok, true} ->
+                        try
+                            libp2p_crypto:bin_to_pubkey(Validator),
+                            ok
+                        catch throw:Why ->
+                                  throw({unusable_miner_key, Why})
+                        end;
+                    _ -> ok
+                end,
+                %% check fee
+                AreFeesEnabled = blockchain_ledger_v1:txn_fees_active(Ledger),
+                ExpectedTxnFee = calculate_fee(Txn, Chain),
+                case ExpectedTxnFee =< Fee orelse not AreFeesEnabled of
+                    false -> throw({wrong_txn_fee, {ExpectedTxnFee, Fee}});
+                    true -> ok
+                end,
+                %% make sure that no one is re-using miner keys
+                case blockchain_ledger_v1:find_gateway_info(Validator, Ledger) of
+                    {ok, _} -> throw(reused_miner_key);
+                    {error, not_found} -> ok
+                end,
+                %% make sure that this validator doesn't already exist
+                case blockchain_ledger_v1:get_validator(Validator, Ledger) of
+                    {ok, _} ->
+                        throw(validator_already_exists);
+                    {error, not_found} ->
+                        %% make sure the staking amount is high enough
+                        case Stake == MinStake of
+                            true -> ok;
+                            false -> throw({incorrect_stake, {exp, MinStake, got, Stake}})
+                        end,
+                        %% make sure that the owner has enough HNT to stake
+                        case blockchain_ledger_v1:find_entry(Owner, Ledger) of
+                            {ok, Entry} ->
+                                Balance = blockchain_ledger_entry_v1:balance(Entry),
+                                case Balance >= Stake of
+                                    true -> ok;
+                                    false -> throw({balance_too_low, {bal, Balance, stk, Stake}})
+                                end;
+                            {error, address_entry_not_found} ->
+                                throw(unknown_owner);
+                            {error, Error} ->
+                                throw(Error)
+                        end,
+                        ok;
+                    {error, Reason} -> throw({validator_fetch_error, Reason})
+                end,
+                ok
+            catch throw:Cause ->
+                    {error, Cause}
+            end
+    end.
+
+is_valid2(Txn, Chain) ->
     Ledger = blockchain:ledger(Chain),
     Owner = ?MODULE:owner(Txn),
     Validator = ?MODULE:validator(Txn),

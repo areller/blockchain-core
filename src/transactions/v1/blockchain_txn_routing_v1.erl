@@ -31,6 +31,7 @@
     signature/1,
     sign/2,
     is_valid/2,
+    is_valid2/2,
     absorb/2,
     print/1,
     json_type/0,
@@ -198,6 +199,64 @@ calculate_staking_fee(#blockchain_txn_routing_v1_pb{}, _Ledger, _Fee, _ExtraData
 -spec is_valid(txn_routing(),
                blockchain:blockchain()) -> ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    Ledger = blockchain:ledger(Chain),
+    OUI = ?MODULE:oui(Txn),
+    case blockchain_ledger_v1:find_routing(OUI, Ledger) of
+        {error, _}=Error ->
+            Error;
+        {ok, Routing} ->
+            Owner = ?MODULE:owner(Txn),
+            case validate_owner(Txn, Routing) of
+                false ->
+                    {error, bad_owner};
+                true ->
+                    Nonce = ?MODULE:nonce(Txn),
+                    LedgerNonce = blockchain_ledger_routing_v1:nonce(Routing),
+                    case Nonce == LedgerNonce + 1 of
+                        false ->
+                            {error, {bad_nonce, {routing, Nonce, LedgerNonce}}};
+                        true ->
+                            Signature = ?MODULE:signature(Txn),
+                            PubKey = libp2p_crypto:bin_to_pubkey(Owner),
+                            BaseTxn = Txn#blockchain_txn_routing_v1_pb{signature = <<>>},
+                            EncodedTxn = blockchain_txn_routing_v1_pb:encode_msg(BaseTxn),
+
+                            case blockchain:config(?max_xor_filter_size, Ledger) of
+                                {ok, XORFilterSize} ->
+                                    case blockchain:config(?max_xor_filter_num, Ledger) of
+                                        {ok, XORFilterNum} ->
+                                            case blockchain:config(?max_subnet_size, Ledger) of
+                                                {ok, MaxSubnetSize} ->
+                                                    case blockchain:config(?min_subnet_size, Ledger) of
+                                                        {ok, MinSubnetSize} ->
+                                                            case blockchain:config(?max_subnet_num, Ledger) of
+                                                                {ok, MaxSubnetNum} ->
+                                                                    case libp2p_crypto:verify(EncodedTxn, Signature, PubKey) of
+                                                                        false ->
+                                                                            {error, bad_signature};
+                                                                        true ->
+                                                                            do_is_valid_checks(Txn, Ledger, Routing, XORFilterSize, XORFilterNum, MinSubnetSize, MaxSubnetSize, MaxSubnetNum, Chain)
+                                                                    end;
+                                                                _ ->
+                                                                    {error, max_subnet_num_not_set}
+                                                            end;
+                                                        _ ->
+                                                            {error, min_subnet_size_not_set}
+                                                    end;
+                                                _ ->
+                                                    {error, max_subnet_size_not_set}
+                                            end;
+                                        _ ->
+                                            {error, max_xor_filter_num_not_set}
+                                    end;
+                                _ ->
+                                    {error, max_xor_filter_size_not_set}
+                            end
+                    end
+            end
+    end.
+
+is_valid2(Txn, Chain) ->
     Ledger = blockchain:ledger(Chain),
     OUI = ?MODULE:oui(Txn),
     case blockchain_ledger_v1:find_routing(OUI, Ledger) of

@@ -24,6 +24,7 @@
     fee_payer/2,
     txns/1,
     is_valid/2,
+    is_valid2/2,
     print/1,
     json_type/0,
     to_json/2
@@ -64,6 +65,39 @@ txns(#blockchain_txn_bundle_v1_pb{transactions=Txns}) ->
 
 -spec is_valid(txn_bundle(), blockchain:blockchain()) -> ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(#blockchain_txn_bundle_v1_pb{transactions=Txns}=Txn, Chain) ->
+    TxnBundleSize = length(Txns),
+    MaxBundleSize = max_bundle_size(Chain),
+
+    %% check that the bundle contains minimum two transactions
+    case TxnBundleSize < 2 of
+        true ->
+            {error, {invalid_min_bundle_size, Txn}};
+        false ->
+            %% check that the bundle size doesn't exceed allowed max_bundle_size var
+            case TxnBundleSize > MaxBundleSize of
+                true ->
+                    {error, {bundle_size_exceeded, {TxnBundleSize, MaxBundleSize}}};
+                false ->
+                    %% check that there are no bundles in the bundle txn
+                    case lists:any(fun(T) ->
+                                           blockchain_txn:type(T) == blockchain_txn_bundle_v1
+                                   end,
+                                   Txns) of
+                        true ->
+                            {error, {invalid_bundleception, Txn}};
+                        false ->
+                            %% speculative check whether the bundle is valid
+                            case speculative_absorb(Txn, Chain) of
+                                [] ->
+                                    ok;
+                                List ->
+                                    {error, {invalid_bundled_txns, List}}
+                            end
+                    end
+            end
+    end.
+
+is_valid2(#blockchain_txn_bundle_v1_pb{transactions=Txns}=Txn, Chain) ->
     TxnBundleSize = length(Txns),
     MaxBundleSize = max_bundle_size(Chain),
 

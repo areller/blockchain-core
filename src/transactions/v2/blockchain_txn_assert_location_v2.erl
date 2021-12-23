@@ -36,6 +36,7 @@
     is_valid_location/2,
     is_valid_payer/1,
     is_valid/2,
+    is_valid2/2,
     absorb/2,
     calculate_fee/2, calculate_fee/5, calculate_staking_fee/2, calculate_staking_fee/5,
     print/1,
@@ -323,6 +324,47 @@ is_valid(Txn, Chain) ->
             {error, {invalid_assert_loc_txn_v2, insufficient_assert_loc_txn_version}}
     end.
 
+is_valid2(Txn, Chain) ->
+    Gateway = ?MODULE:gateway(Txn),
+    Owner = ?MODULE:owner(Txn),
+    Payer = ?MODULE:payer(Txn),
+    Location = ?MODULE:location(Txn),
+    Gain = ?MODULE:gain(Txn),
+    Elevation = ?MODULE:elevation(Txn),
+    Ledger = blockchain:ledger(Chain),
+
+    case blockchain:config(?assert_loc_txn_version, Ledger) of
+        {ok, V} when V >= 2 ->
+            case blockchain:config(?min_antenna_gain, Ledger) of
+                {ok, MinGain} ->
+                    case blockchain:config(?max_antenna_gain, Ledger) of
+                        {ok, MaxGain} ->
+                            case is_valid_gain(Txn, MinGain, MaxGain) of
+                                false ->
+                                    {error, {invalid_assert_loc_txn_v2, {invalid_antenna_gain, Gain, MinGain, MaxGain}}};
+                                true ->
+                                    Res = blockchain_txn:validate_fields([{{gateway, Gateway}, {address, libp2p}},
+                                                                          {{owner, Owner}, {address, libp2p}},
+                                                                          {{payer, Payer}, {address, libp2p}},
+                                                                          {{location, Location}, {is_integer, 0}},
+                                                                          {{elevation, Elevation}, {is_integer, -2147483648}}
+                                                                         ]),
+
+                                    case Res of
+                                        {error, _}=E -> E;
+                                        ok ->
+                                            do_is_valid_checks(Txn, Chain)
+                                    end
+                            end;
+                        _ ->
+                            {error, {invalid_assert_loc_txn_v2, max_antenna_gain_not_set}}
+                    end;
+                _ ->
+                    {error, {invalid_assert_loc_txn_v2, min_antenna_gain_not_set}}
+            end;
+        _ ->
+            {error, {invalid_assert_loc_txn_v2, insufficient_assert_loc_txn_version}}
+    end.
 
 -spec do_is_valid_checks(Txn :: txn_assert_location(),
                          Chain :: blockchain:blockchain()) -> ok | {error, any()}.

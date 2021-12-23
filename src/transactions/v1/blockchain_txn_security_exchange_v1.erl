@@ -27,6 +27,7 @@
     signature/1,
     sign/2,
     is_valid/2,
+    is_valid2/2,
     absorb/2,
     print/1,
     json_type/0,
@@ -182,6 +183,44 @@ calculate_fee(Txn, Ledger, DCPayloadSize, TxnFeeMultiplier, true) ->
 %%--------------------------------------------------------------------
 -spec is_valid(txn_security_exchange(), blockchain:blockchain()) -> ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    Ledger = blockchain:ledger(Chain),
+    Payer = ?MODULE:payer(Txn),
+    Payee = ?MODULE:payee(Txn),
+    TxnFee = ?MODULE:fee(Txn),
+    Signature = ?MODULE:signature(Txn),
+    PubKey = libp2p_crypto:bin_to_pubkey(Payer),
+    BaseTxn = Txn#blockchain_txn_security_exchange_v1_pb{signature = <<>>},
+    EncodedTxn = blockchain_txn_security_exchange_v1_pb:encode_msg(BaseTxn),
+    case blockchain_txn:validate_fields([{{payee, Payee}, {address, libp2p}}]) of
+        ok ->
+            case libp2p_crypto:verify(EncodedTxn, Signature, PubKey) of
+                false ->
+                    {error, bad_signature};
+                true ->
+                    case Payer == Payee of
+                        false ->
+                            Amount = ?MODULE:amount(Txn),
+                            case blockchain_ledger_v1:check_security_balance(Payer, Amount, Ledger) of
+                                ok ->
+                                    AreFeesEnabled = blockchain_ledger_v1:txn_fees_active(Ledger),
+                                    ExpectedTxnFee = ?MODULE:calculate_fee(Txn, Chain),
+                                    case ExpectedTxnFee =< TxnFee orelse not AreFeesEnabled of
+                                        false ->
+                                            {error, {wrong_txn_fee, {ExpectedTxnFee, TxnFee}}};
+                                        true ->
+                                            blockchain_ledger_v1:check_dc_or_hnt_balance(Payer, TxnFee, Ledger, AreFeesEnabled)
+                                    end;
+                                Error ->
+                                    Error
+                            end;
+                        true ->
+                            {error, invalid_transaction_self_payment}
+                    end
+            end;
+        Error -> Error
+    end.
+
+is_valid2(Txn, Chain) ->
     Ledger = blockchain:ledger(Chain),
     Payer = ?MODULE:payer(Txn),
     Payee = ?MODULE:payee(Txn),

@@ -28,6 +28,7 @@
     signature/1,
     sign/2,
     is_valid/2,
+    is_valid2/2,
     absorb/2,
     create_secret_hash/2,
     connections/1,
@@ -190,6 +191,42 @@ sign(Txn, SigFun) ->
 %%--------------------------------------------------------------------
 -spec is_valid(txn_poc_receipts(), blockchain:blockchain()) -> ok | {error, atom()} | {error, {atom(), any()}}.
 is_valid(Txn, Chain) ->
+    Ledger = blockchain:ledger(Chain),
+    Challenger = ?MODULE:challenger(Txn),
+    Signature = ?MODULE:signature(Txn),
+    PubKey = libp2p_crypto:bin_to_pubkey(Challenger),
+    BaseTxn = Txn#blockchain_txn_poc_receipts_v1_pb{signature = <<>>},
+    EncodedTxn = blockchain_txn_poc_receipts_v1_pb:encode_msg(BaseTxn),
+    case libp2p_crypto:verify(EncodedTxn, Signature, PubKey) of
+        false ->
+            {error, bad_signature};
+        true ->
+            case blockchain_ledger_v1:find_gateway_mode(Challenger, Ledger) of
+                {error, _Reason}=Error ->
+                    Error;
+                {ok, ChallengerGWMode} ->
+                    %% check the challenger is allowed to issue POCs
+                    case blockchain_ledger_gateway_v2:is_valid_capability(ChallengerGWMode, ?GW_CAPABILITY_POC_CHALLENGER, Ledger) of
+                        false -> {error, {challenger_not_allowed, ChallengerGWMode}};
+                        true ->
+                            case ?MODULE:path(Txn) =:= [] of
+                                true ->
+                                    {error, empty_path};
+                                false ->
+                                    case check_is_valid_poc(Txn, Chain) of
+                                        ok -> ok;
+                                        {ok, Channels} ->
+                                            lager:debug("POCID: ~p, validated ok with reported channels: ~p",
+                                                        [poc_id(Txn), Channels]),
+                                            ok;
+                                        Error -> Error
+                                    end
+                            end
+                    end
+            end
+    end.
+
+is_valid2(Txn, Chain) ->
     Ledger = blockchain:ledger(Chain),
     Challenger = ?MODULE:challenger(Txn),
     Signature = ?MODULE:signature(Txn),
