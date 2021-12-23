@@ -39,6 +39,7 @@
     is_valid2/2,
     absorb/2,
     calculate_rewards/3,
+    calculate_rewards2/3,
     calculate_rewards_metadata/3,
     print/1,
     json_type/0,
@@ -154,10 +155,13 @@ is_valid2(Txn, Chain) ->
         [] ->
             ok;
         _ ->
-            case ?MODULE:calculate_rewards(Start, End, Chain) of
+            lager:info("################ ==6 blockchain_txn_rewards_v2 is_valid2 before calculate_rewards"),
+            case ?MODULE:calculate_rewards2(Start, End, Chain) of
                 {error, _Reason}=Error ->
+                    lager:info("################ ==6 blockchain_txn_rewards_v2 is_valid2 after calculate_rewards.0"),
                     Error;
                 {ok, CalRewards} ->
+                    lager:info("################ ==6 blockchain_txn_rewards_v2 is_valid2 after calculate_rewards.1"),
                     CalRewardsHashes = [hash(R)|| R <- CalRewards],
                     TxnRewardsHashes = [hash(R)|| R <- TxnRewards],
                     case CalRewardsHashes == TxnRewardsHashes of
@@ -262,6 +266,11 @@ calculate_rewards(Start, End, Chain) ->
     {ok, Ledger} = blockchain:ledger_at(End, Chain),
     calculate_rewards_(Start, End, Ledger, Chain, false).
 
+calculate_rewards2(Start, End, Chain) ->
+    {ok, Ledger} = blockchain:ledger_at(End, Chain),
+    lager:info("################ ==6 blockchain_txn_rewards_v2 calculate_rewards2 before calculate_rewards_"),
+    calculate_rewards2_(Start, End, Ledger, Chain, false).
+
 -spec calculate_rewards_(
         Start :: non_neg_integer(),
         End :: non_neg_integer(),
@@ -277,6 +286,22 @@ calculate_rewards_(Start, End, Ledger, Chain, ReturnMD) ->
                 {ok, prepare_rewards_v2_txns(Results, Ledger)};
             true ->
                 {ok, prepare_rewards_v2_txns(Results, Ledger), Results}
+        end
+    catch
+        C:Error:Stack ->
+            lager:error("Caught ~p; couldn't prepare rewards txn because: ~p~n~p", [C, Error, Stack]),
+            Error
+    end.
+
+calculate_rewards2_(Start, End, Ledger, Chain, ReturnMD) ->
+    {ok, Results} = calculate_rewards_metadata(Start, End, blockchain:ledger(Ledger, Chain)),
+    lager:info("################ ==6 blockchain_txn_rewards_v2 calculate_rewards2_ after calculate_rewards_metadata"),
+    try
+        case ReturnMD of
+            false ->
+                {ok, prepare_rewards_v2_txns2(Results, Ledger)};
+            true ->
+                {ok, prepare_rewards_v2_txns2(Results, Ledger), Results}
         end
     catch
         C:Error:Stack ->
@@ -614,6 +639,82 @@ prepare_rewards_v2_txns(Results, Ledger) ->
                                         case blockchain_ledger_v1:get_validator(V, Ledger) of
                                             {error, _} -> Acc;
                                             {ok, Val} ->
+                                                Owner = blockchain_ledger_validator_v1:owner_address(Val),
+                                                maps:update_with(Owner,
+                                                                 fun(Balance) -> Balance + Amt end,
+                                                                 Amt,
+                                                                 Acc)
+                                         end
+                                end % Entry case
+                        end, % function
+                        Rewards,
+                        maps:iterator(R)) %% bound memory size no matter size of map
+      end,
+      #{},
+      [poc_challenger, poc_challengee, poc_witness,
+       dc_rewards, consensus_rewards, securities_rewards]),
+
+    %% now we are going to fold over all rewards and construct our
+    %% transaction for the blockchain
+
+    Rewards = maps:fold(fun(Owner, 0, Acc) ->
+                                lager:debug("Dropping reward for ~p because the amount is 0",
+                                            [?BIN_TO_B58(Owner)]),
+                                Acc;
+                            (Owner, Amount, Acc) ->
+                                [ new_reward(Owner, Amount) | Acc ]
+                        end,
+              [],
+              maps:iterator(AllRewards)), %% again, bound memory no matter size of map
+
+    %% sort the rewards list before it gets returned so list ordering is deterministic
+    %% (map keys can be enumerated in any arbitrary order)
+    lists:sort(Rewards).
+
+prepare_rewards_v2_txns2(Results, Ledger) ->
+    %% we are going to fold over a list of keys in the rewards map (Results)
+    %% and generate a new map which has _all_ the owners and the sum of
+    %% _all_ rewards types in a new map...
+    lager:info("################ ==6 blockchain_txn_rewards_v2 enter prepare_rewards_v2_txns2"),
+    AllRewards = lists:foldl(
+      fun(RewardCategory, Rewards) ->
+              lager:info("################ ==6 blockchain_txn_rewards_v2 prepare_rewards_v2_txns2 before maps:get.0"),
+              R = maps:get(RewardCategory, Results),
+              %% R is our map of rewards of the given type
+              %% and now we are going to do a maps:fold/3
+              %% over this reward category and either
+              %% add the owner and amount for the first
+              %% time or add an amount to an existing owner
+              %% in the Rewards accumulator
+
+              maps:fold(fun(Entry, Amt, Acc) ->
+                                case Entry of
+                                    {owner, _Type, O} ->
+                                        maps:update_with(O,
+                                                         fun(Balance) -> Balance + Amt end,
+                                                         Amt,
+                                                         Acc);
+                                    {gateway, _Type, G} ->
+                                        lager:info("################ ==6 blockchain_txn_rewards_v2 prepare_rewards_v2_txns2 before find_gatewway_owner.0"),
+                                        case blockchain_ledger_v1:find_gateway_owner(G, Ledger) of
+                                            {error, _Error} -> 
+                                                lager:info("################ ==6 blockchain_txn_rewards_v2 prepare_rewards_v2_txns2 after find_gatewway_owner.0"),
+                                                Acc;
+                                            {ok, GwOwner} ->
+                                                lager:info("################ ==6 blockchain_txn_rewards_v2 prepare_rewards_v2_txns2 after find_gatewway_owner.1"),
+                                                maps:update_with(GwOwner,
+                                                                 fun(Balance) -> Balance + Amt end,
+                                                                 Amt,
+                                                                 Acc)
+                                        end; % gw case
+                                    {validator, _Type, V} ->
+                                        lager:info("################ ==6 blockchain_txn_rewards_v2 prepare_rewards_v2_txns2 before get_validator.0"),
+                                        case blockchain_ledger_v1:get_validator(V, Ledger) of
+                                            {error, _} -> 
+                                                lager:info("################ ==6 blockchain_txn_rewards_v2 prepare_rewards_v2_txns2 after get_validator.0"),
+                                                Acc;
+                                            {ok, Val} ->
+                                                lager:info("################ ==6 blockchain_txn_rewards_v2 prepare_rewards_v2_txns2 after get_validator.1"),
                                                 Owner = blockchain_ledger_validator_v1:owner_address(Val),
                                                 maps:update_with(Owner,
                                                                  fun(Balance) -> Balance + Amt end,
